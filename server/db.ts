@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -287,7 +288,28 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_analytics_daily_date ON analytics_daily(metric_date);
 `;
 
+interface SqlJsDatabase {
+  exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
+  run: (sql: string, params?: unknown[]) => void;
+  prepare: (sql: string) => {
+    bind: (params?: unknown[]) => boolean;
+    step: () => boolean;
+    getAsObject: () => Record<string, unknown>;
+    free: () => void;
+  };
+  getRowsModified: () => number;
+  export: () => Uint8Array;
+}
+
+interface SqlJsStatic {
+  Database: new (data?: ArrayLike<number>) => SqlJsDatabase;
+}
+
 let activeDriver: DbDriver | null = null;
+let activeSqlConstructor: SqlJsStatic | null = null;
+let activeSqlDb: SqlJsDatabase | null = null;
+let activeDbFilePath = DB_PATH;
+let currentVaultRev = 'init';
 let initPromise: Promise<void> | null = null;
 
 function ensureDirWritable(dir: string): string {
@@ -315,26 +337,15 @@ function normalizeSqlParams(params: unknown[]): (string | number | Uint8Array | 
 }
 
 async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
-  type SqlJsInit = (config?: Record<string, unknown>) => Promise<{
-    Database: new (data?: ArrayLike<number>) => {
-      exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
-      run: (sql: string, params?: unknown[]) => void;
-      prepare: (sql: string) => {
-        bind: (params?: unknown[]) => boolean;
-        step: () => boolean;
-        getAsObject: () => Record<string, unknown>;
-        free: () => void;
-      };
-      getRowsModified: () => number;
-      export: () => Uint8Array;
-    };
-  }>;
+  type SqlJsInit = (config?: Record<string, unknown>) => Promise<SqlJsStatic>;
   const rawInit = initSqlJs as unknown as SqlJsInit | { default?: SqlJsInit };
   const initFn = typeof rawInit === 'function' ? rawInit : rawInit?.default;
   if (typeof initFn !== 'function') {
     throw new Error('Failed to load embedded SQLite WASM driver.');
   }
   const SQL = await initFn();
+  activeSqlConstructor = SQL;
+  activeDbFilePath = dbFilePath;
 
   let initialData: Uint8Array | undefined;
   try {
@@ -345,11 +356,12 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
     initialData = undefined;
   }
 
-  const sqlDb = new SQL.Database(initialData);
+  activeSqlDb = new SQL.Database(initialData);
 
   const persist = () => {
+    if (!activeSqlDb) return;
     try {
-      fs.writeFileSync(dbFilePath, Buffer.from(sqlDb.export()));
+      fs.writeFileSync(activeDbFilePath, Buffer.from(activeSqlDb.export()));
     } catch {
       // Continue cleanly in memory if filesystem write is unavailable
     }
@@ -358,7 +370,8 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
   return {
     engineName: 'SQLite (Embedded WASM)',
     exec(sql: string) {
-      sqlDb.exec(sql);
+      if (!activeSqlDb) throw new Error('SQLite database is not open.');
+      activeSqlDb.exec(sql);
       if (/^\s*(CREATE|INSERT|UPDATE|DELETE|DROP|ALTER)/im.test(sql)) {
         persist();
       }
@@ -367,7 +380,8 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
       const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)/i.test(sql);
       return {
         run(...params: unknown[]): DbRunResult {
-          const stmt = sqlDb.prepare(sql);
+          if (!activeSqlDb) throw new Error('SQLite database is not open.');
+          const stmt = activeSqlDb.prepare(sql);
           try {
             stmt.bind(normalizeSqlParams(params));
             stmt.step();
@@ -375,18 +389,19 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
             stmt.free();
           }
           let lastId = 0;
-          const idRes = sqlDb.exec('SELECT last_insert_rowid()');
+          const idRes = activeSqlDb.exec('SELECT last_insert_rowid()');
           if (idRes.length > 0 && idRes[0].values.length > 0) {
             lastId = Number(idRes[0].values[0][0] ?? 0);
           }
-          const changes = sqlDb.getRowsModified();
+          const changes = activeSqlDb.getRowsModified();
           if (isWrite) {
             persist();
           }
           return { lastInsertRowid: lastId, changes };
         },
         get(...params: unknown[]): unknown {
-          const stmt = sqlDb.prepare(sql);
+          if (!activeSqlDb) throw new Error('SQLite database is not open.');
+          const stmt = activeSqlDb.prepare(sql);
           try {
             stmt.bind(normalizeSqlParams(params));
             if (!stmt.step()) return undefined;
@@ -396,7 +411,8 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
           }
         },
         all(...params: unknown[]): Record<string, unknown>[] {
-          const stmt = sqlDb.prepare(sql);
+          if (!activeSqlDb) throw new Error('SQLite database is not open.');
+          const stmt = activeSqlDb.prepare(sql);
           const rows: Record<string, unknown>[] = [];
           try {
             stmt.bind(normalizeSqlParams(params));
@@ -474,12 +490,83 @@ export async function ensureDbReady(): Promise<void> {
 
       activeDriver.exec('PRAGMA foreign_keys = ON;');
       activeDriver.exec(SCHEMA_SQL);
+      const revRow = activeDriver
+        .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
+        .get('__vault_rev') as { setting_value: string } | undefined;
+      currentVaultRev = revRow?.setting_value || 'init';
     })().catch((err) => {
       initPromise = null;
       throw err;
     });
   }
   await initPromise;
+}
+
+export function isSqlJsActive(): boolean {
+  return Boolean(activeSqlDb);
+}
+
+export function getVaultRev(): string {
+  return currentVaultRev;
+}
+
+export function bumpVaultRev(): string {
+  const nextRev = crypto.randomBytes(8).toString('hex');
+  currentVaultRev = nextRev;
+  if (activeDriver) {
+    activeDriver
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES ('__vault_rev', ?, datetime('now'))
+        ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')
+      `)
+      .run(nextRev);
+  }
+  return nextRev;
+}
+
+export function exportDatabaseBytes(): Uint8Array | null {
+  if (!activeSqlDb) return null;
+  let exported = activeSqlDb.export();
+  if (exported.length > 48_000) {
+    // Keep serverless synced snapshot compact if many logs accumulate
+    const logTables = ['api_logs', 'webhook_logs', 'activity_logs', 'login_history', 'notifications'];
+    for (const tbl of logTables) {
+      try {
+        activeSqlDb.exec(
+          `DELETE FROM ${tbl} WHERE id NOT IN (SELECT id FROM ${tbl} ORDER BY id DESC LIMIT 40);`
+        );
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      activeSqlDb.exec('VACUUM;');
+    } catch {
+      // ignore
+    }
+    exported = activeSqlDb.export();
+  }
+  return exported;
+}
+
+export function replaceDatabaseBytes(bytes: Uint8Array): void {
+  if (!activeSqlConstructor || !activeDriver) return;
+  const restored = new activeSqlConstructor.Database(bytes);
+  restored.exec('PRAGMA foreign_keys = ON;');
+  restored.exec(SCHEMA_SQL);
+  activeSqlDb = restored;
+
+  const revRow = activeDriver
+    .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
+    .get('__vault_rev') as { setting_value: string } | undefined;
+  currentVaultRev = revRow?.setting_value || 'init';
+
+  try {
+    fs.writeFileSync(activeDbFilePath, Buffer.from(restored.export()));
+  } catch {
+    // ignore disk write issues in memory-only fallback
+  }
 }
 
 function getActiveDriver(): DbDriver {

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 function resolveKeyStorageDir(): string {
   if (process.env.XC_STORAGE_DIR) {
@@ -34,12 +35,16 @@ export function getMasterKey(): Buffer {
   }
 
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const stableOrigin =
+      process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+      (process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL' ? process.env.APP_URL : '') ||
+      process.env.VERCEL_URL ||
+      '';
     const seedMaterial = [
       process.env.XC_SESSION_SECRET,
       process.env.XC_ADMIN_PASSWORD,
       process.env.XC_RECOVERY_CODE,
-      process.env.VERCEL_PROJECT_PRODUCTION_URL,
-      process.env.VERCEL_URL,
+      stableOrigin,
       'xc-bot-control-serverless-fallback',
     ]
       .filter(Boolean)
@@ -137,4 +142,31 @@ export function generateRandomToken(bytes = 24): string {
 export function computeBackupChecksum(data: unknown): string {
   const serialized = JSON.stringify(data);
   return crypto.createHash('sha256').update(serialized).digest('hex');
+}
+
+/**
+ * Compresses and encrypts a binary SQLite snapshot with AES-256-GCM so serverless
+ * instances stay synchronized without exposing any plaintext tokens or secrets.
+ */
+export function encryptVaultBytes(rawBytes: Uint8Array, keyOverride?: Buffer): string {
+  const compressed = zlib.gzipSync(Buffer.from(rawBytes), { level: 9 });
+  const key = keyOverride || getMasterKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(compressed), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v2:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('base64url')}`;
+}
+
+export function decryptVaultBytes(payload: string, keyOverride?: Buffer): Uint8Array {
+  const parts = payload.split(':');
+  if (parts.length !== 4 || parts[0] !== 'v2') {
+    throw new Error('Malformed encrypted vault payload');
+  }
+  const [, ivHex, tagHex, dataB64] = parts;
+  const key = keyOverride || getMasterKey();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+  const compressed = Buffer.concat([decipher.update(Buffer.from(dataB64, 'base64url')), decipher.final()]);
+  return new Uint8Array(zlib.gunzipSync(compressed));
 }

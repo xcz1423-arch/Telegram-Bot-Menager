@@ -9,6 +9,8 @@ import {
   hashPassword,
   verifyPassword,
   computeBackupChecksum,
+  encryptVaultBytes,
+  decryptVaultBytes,
 } from './crypto.js';
 
 test('encryptToken and decryptToken perform AES-256-GCM round-trip and detect tampering', () => {
@@ -54,4 +56,17 @@ test('computeBackupChecksum detects payload modification', () => {
   const c1 = computeBackupChecksum(payload);
   const c2 = computeBackupChecksum({ version: 1, bots: [{ id: 1, username: 'tampered_bot' }] });
   assert.notEqual(c1, c2);
+});
+
+test('encryptVaultBytes and decryptVaultBytes round-trip compressed SQLite snapshots and reject tampering', () => {
+  const key = crypto.randomBytes(32);
+  const sample = new Uint8Array(Buffer.from('SQLite format 3\0' + 'x'.repeat(256)));
+  const encrypted = encryptVaultBytes(sample, key);
+  assert.equal(encrypted.startsWith('v2:'), true);
+
+  const decrypted = decryptVaultBytes(encrypted, key);
+  assert.deepEqual(decrypted, sample);
+
+  // Wrong key fails GCM authentication
+  assert.throws(() => decryptVaultBytes(encrypted, crypto.randomBytes(32)));
 });

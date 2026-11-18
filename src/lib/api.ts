@@ -16,7 +16,39 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
+const VAULT_STORAGE_KEY = 'xc_encrypted_vault';
+const VAULT_REV_STORAGE_KEY = 'xc_encrypted_vault_rev';
+
+function readVault(): { vault: string; rev: string } {
+  try {
+    return {
+      vault: localStorage.getItem(VAULT_STORAGE_KEY) || '',
+      rev: localStorage.getItem(VAULT_REV_STORAGE_KEY) || '',
+    };
+  } catch {
+    return { vault: '', rev: '' };
+  }
+}
+
+function writeVault(vault: string, rev: string) {
+  try {
+    localStorage.setItem(VAULT_STORAGE_KEY, vault);
+    localStorage.setItem(VAULT_REV_STORAGE_KEY, rev);
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function clearVault() {
+  try {
+    localStorage.removeItem(VAULT_STORAGE_KEY);
+    localStorage.removeItem(VAULT_REV_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export async function apiFetch<T>(url: string, options: RequestInit = {}, includeVaultPayload = false): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
@@ -26,11 +58,23 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
     headers.set('X-CSRF-Token', csrfToken);
   }
 
+  const stored = readVault();
+  if (stored.rev) {
+    headers.set('X-XC-Vault-Rev', stored.rev);
+  }
+  if (includeVaultPayload && stored.vault) {
+    headers.set('X-XC-Vault', stored.vault);
+  }
+
   const res = await fetch(url, {
     ...options,
     headers,
     credentials: 'include',
   });
+
+  if (res.headers.get('X-XC-Vault-Reset') === '1') {
+    clearVault();
+  }
 
   const text = await res.text();
   let json: Record<string, unknown> = {};
@@ -42,9 +86,19 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
     }
   }
 
+  if (res.status === 409 && json.code === 'VAULT_SYNC_REQUIRED' && !includeVaultPayload && stored.vault) {
+    return apiFetch<T>(url, options, true);
+  }
+
   if (!res.ok) {
     const errMsg = typeof json.error === 'string' ? json.error : `Request failed (${res.status})`;
     throw new ApiError(errMsg, res.status);
+  }
+
+  if (typeof json._vault === 'string' && typeof json._vaultRev === 'string') {
+    writeVault(json._vault, json._vaultRev);
+    delete json._vault;
+    delete json._vaultRev;
   }
 
   return json as T;
