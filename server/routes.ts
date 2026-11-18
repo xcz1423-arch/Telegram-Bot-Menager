@@ -152,7 +152,7 @@ apiRouter.post('/auth/setup', (req, res) => {
   const displayName = String(req.body?.displayName ?? username).trim();
   const password = String(req.body?.password ?? '');
   const recoveryHint = String(req.body?.recoveryHint ?? '').trim();
-  const seedDemo = Boolean(req.body?.seedDemo ?? true);
+  const seedDemo = Boolean(req.body?.seedDemo ?? false);
 
   if (username.length < 3 || !/^[a-zA-Z0-9_.-]+$/.test(username)) {
     res.status(400).json({ error: 'Username must be at least 3 characters (letters, numbers, _, ., -).' });
@@ -666,6 +666,32 @@ apiRouter.post('/bots', async (req, res) => {
   const botId = Number(insert.lastInsertRowid);
   db.prepare('INSERT INTO bot_settings (bot_id) VALUES (?)').run(botId);
 
+  // Best-effort sync of existing live bio & description from Telegram
+  if (format.mode === 'live') {
+    const insertedBot = getBotById(botId);
+    if (insertedBot) {
+      const [shortRes, descRes] = await Promise.allSettled([
+        shortDesc ? Promise.resolve(null) : executeBotMethod(insertedBot, 'getMyShortDescription', {}),
+        executeBotMethod(insertedBot, 'getMyDescription', {}),
+      ]);
+      const fetchedShort =
+        shortRes.status === 'fulfilled' && shortRes.value?.ok
+          ? String((shortRes.value.result as { short_description?: string } | undefined)?.short_description ?? '').trim()
+          : shortDesc;
+      const fetchedDesc =
+        descRes.status === 'fulfilled' && descRes.value?.ok
+          ? String((descRes.value.result as { description?: string } | undefined)?.description ?? '').trim()
+          : '';
+      if (fetchedShort !== shortDesc || fetchedDesc) {
+        db.prepare(`UPDATE bots SET short_description = ?, description = ?, updated_at = datetime('now') WHERE id = ?`).run(
+          fetchedShort,
+          fetchedDesc,
+          botId
+        );
+      }
+    }
+  }
+
   logActivity({
     action: 'BOT_ADDED',
     botId,
@@ -702,21 +728,70 @@ apiRouter.get('/bots/:id', (req, res) => {
   res.json({ bot: sanitizeBotForClient(bot), settings, counts });
 });
 
-apiRouter.patch('/bots/:id', (req, res) => {
+apiRouter.patch('/bots/:id', async (req, res) => {
   const bot = getBotById(Number(req.params.id));
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
   }
   const name = String(req.body?.name ?? bot.name).trim();
-  const shortDesc = String(req.body?.short_description ?? bot.short_description).trim();
-  const description = String(req.body?.description ?? bot.description).trim();
+  const shortDesc = String(req.body?.short_description ?? bot.short_description ?? '').trim();
+  const description = String(req.body?.description ?? bot.description ?? '').trim();
   const status = req.body?.connection_status;
   const nextStatus = ['connected', 'disconnected'].includes(status) ? status : bot.connection_status;
+  const syncTelegram = req.body?.sync_telegram !== false;
 
   if (!name) {
     res.status(400).json({ error: 'Bot name cannot be empty.' });
     return;
+  }
+  if (name.length > 64) {
+    res.status(400).json({ error: 'Bot name must be 64 characters or fewer (Telegram limit).' });
+    return;
+  }
+  if (shortDesc.length > 120) {
+    res.status(400).json({ error: 'Bot bio (short description) must be 120 characters or fewer (Telegram limit).' });
+    return;
+  }
+  if (description.length > 512) {
+    res.status(400).json({ error: 'Bot description must be 512 characters or fewer (Telegram limit).' });
+    return;
+  }
+
+  const syncedMethods: string[] = [];
+  if (syncTelegram) {
+    if (name !== bot.name) {
+      const r = await executeBotMethod(bot, 'setMyName', { name });
+      if (!r.ok) {
+        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
+          error: `Telegram setMyName failed: ${r.description || 'Unknown error'}`,
+        });
+        return;
+      }
+      syncedMethods.push('setMyName');
+    }
+
+    if (shortDesc !== (bot.short_description || '')) {
+      const r = await executeBotMethod(bot, 'setMyShortDescription', { short_description: shortDesc });
+      if (!r.ok) {
+        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
+          error: `Telegram setMyShortDescription failed: ${r.description || 'Unknown error'}`,
+        });
+        return;
+      }
+      syncedMethods.push('setMyShortDescription');
+    }
+
+    if (description !== (bot.description || '')) {
+      const r = await executeBotMethod(bot, 'setMyDescription', { description });
+      if (!r.ok) {
+        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
+          error: `Telegram setMyDescription failed: ${r.description || 'Unknown error'}`,
+        });
+        return;
+      }
+      syncedMethods.push('setMyDescription');
+    }
   }
 
   db.prepare(`
@@ -731,7 +806,61 @@ apiRouter.patch('/bots/:id', (req, res) => {
     botName: name,
     status: 'success',
     relatedResource: `@${bot.username}`,
-    details: 'Updated bot profile configuration.',
+    details: syncedMethods.length
+      ? `Updated bot profile and synced with Telegram (${syncedMethods.join(', ')}).`
+      : 'Updated bot profile configuration.',
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, syncedMethods, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+
+  const [nameRes, shortRes, descRes] = await Promise.all([
+    executeBotMethod(bot, 'getMyName', {}),
+    executeBotMethod(bot, 'getMyShortDescription', {}),
+    executeBotMethod(bot, 'getMyDescription', {}),
+  ]);
+
+  if (!nameRes.ok && !shortRes.ok && !descRes.ok) {
+    res.status(502).json({
+      error: nameRes.description || shortRes.description || descRes.description || 'Failed to pull profile from Telegram.',
+    });
+    return;
+  }
+
+  const nextName =
+    nameRes.ok && typeof (nameRes.result as { name?: unknown } | undefined)?.name === 'string'
+      ? String((nameRes.result as { name: string }).name).trim() || bot.name
+      : bot.name;
+  const nextShort =
+    shortRes.ok && typeof (shortRes.result as { short_description?: unknown } | undefined)?.short_description === 'string'
+      ? String((shortRes.result as { short_description: string }).short_description).trim()
+      : bot.short_description || '';
+  const nextDesc =
+    descRes.ok && typeof (descRes.result as { description?: unknown } | undefined)?.description === 'string'
+      ? String((descRes.result as { description: string }).description).trim()
+      : bot.description || '';
+
+  db.prepare(`
+    UPDATE bots
+    SET name = ?, short_description = ?, description = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(nextName, nextShort, nextDesc, bot.id);
+
+  logActivity({
+    action: 'BOT_PROFILE_PULLED',
+    botId: bot.id,
+    botName: nextName,
+    status: 'success',
+    relatedResource: `@${bot.username}`,
+    details: 'Pulled current Name, Bio, and Description from Telegram Bot API.',
     ipAddress: getClientIp(req),
   });
 

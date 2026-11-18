@@ -78,6 +78,36 @@ export const TELEGRAM_API_METHODS: ApiMethodDef[] = [
       { name: 'language_code', type: 'string', description: 'Two-letter ISO 639-1 language code', placeholder: 'en' },
     ],
   },
+  {
+    method: 'setMyName',
+    category: 'bot_info',
+    summary: "Change the bot's name shown on Telegram (0-64 characters).",
+    httpMethod: 'POST',
+    params: [
+      { name: 'name', type: 'string', description: 'New bot name (0-64 characters)', placeholder: 'XC Bot' },
+      { name: 'language_code', type: 'string', description: 'Two-letter ISO 639-1 language code', placeholder: 'en' },
+    ],
+  },
+  {
+    method: 'setMyShortDescription',
+    category: 'bot_info',
+    summary: "Change the bot's bio / short description on its profile page (0-120 characters).",
+    httpMethod: 'POST',
+    params: [
+      { name: 'short_description', type: 'string', description: 'New short description / bio (0-120 characters)', placeholder: 'Automated Telegram assistant' },
+      { name: 'language_code', type: 'string', description: 'Two-letter ISO 639-1 language code', placeholder: 'en' },
+    ],
+  },
+  {
+    method: 'setMyDescription',
+    category: 'bot_info',
+    summary: "Change the bot's description shown in empty chats before /start (0-512 characters).",
+    httpMethod: 'POST',
+    params: [
+      { name: 'description', type: 'string', description: 'New bot description (0-512 characters)', placeholder: 'What can this bot do?' },
+      { name: 'language_code', type: 'string', description: 'Two-letter ISO 639-1 language code', placeholder: 'en' },
+    ],
+  },
   // B. Messaging
   {
     method: 'sendMessage',

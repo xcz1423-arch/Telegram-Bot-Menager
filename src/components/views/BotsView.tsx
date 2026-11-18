@@ -240,6 +240,8 @@ export function BotsView({
   const [subTab, setSubTab] = useState<'overview' | 'edit' | 'settings'>('overview');
   const [editName, setEditName] = useState(selectedBot?.name || '');
   const [editShort, setEditShort] = useState(selectedBot?.short_description || '');
+  const [editDescription, setEditDescription] = useState(selectedBot?.description || '');
+  const [syncTelegram, setSyncTelegram] = useState(true);
   const [editStatus, setEditStatus] = useState<'connected' | 'disconnected'>(
     selectedBot?.connection_status === 'disconnected' ? 'disconnected' : 'connected'
   );
@@ -255,12 +257,19 @@ export function BotsView({
     if (selectedBot) {
       setEditName(selectedBot.name);
       setEditShort(selectedBot.short_description || '');
+      setEditDescription(selectedBot.description || '');
       setEditStatus(selectedBot.connection_status === 'disconnected' ? 'disconnected' : 'connected');
       setParseMode(selectedBot.settings?.default_parse_mode || 'HTML');
       setDisableNotif(Boolean(selectedBot.settings?.disable_notification));
       setProtectContent(Boolean(selectedBot.settings?.protect_content));
     }
-  }, [selectedBot?.id]);
+  }, [
+    selectedBot?.id,
+    selectedBot?.name,
+    selectedBot?.short_description,
+    selectedBot?.description,
+    selectedBot?.connection_status,
+  ]);
 
   const handleTestConnection = async (bot: BotSummary) => {
     setBusyAction('test');
@@ -299,14 +308,45 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('save');
     try {
-      await apiFetch(`/api/bots/${selectedBot.id}`, {
+      const res = await apiFetch<{ ok: boolean; syncedMethods?: string[]; bot: BotSummary }>(`/api/bots/${selectedBot.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: editName, short_description: editShort, connection_status: editStatus }),
+        body: JSON.stringify({
+          name: editName,
+          short_description: editShort,
+          description: editDescription,
+          connection_status: editStatus,
+          sync_telegram: syncTelegram,
+        }),
       });
-      onToast('success', 'Bot Updated', 'Configuration saved.');
+      onToast(
+        'success',
+        'Bot Profile Updated',
+        res.syncedMethods?.length
+          ? `Saved & synced with Telegram (${res.syncedMethods.join(', ')}).`
+          : 'Configuration saved.'
+      );
       onRefresh();
     } catch (err) {
       onToast('error', 'Update Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handlePullProfile = async () => {
+    if (!selectedBot) return;
+    setBusyAction('pull');
+    try {
+      const res = await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/sync-profile`, {
+        method: 'POST',
+      });
+      setEditName(res.bot.name);
+      setEditShort(res.bot.short_description || '');
+      setEditDescription(res.bot.description || '');
+      onToast('success', 'Profile Synced', `Loaded current Name & Bio for @${selectedBot.username}.`);
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Sync Failed', err instanceof Error ? err.message : undefined);
     } finally {
       setBusyAction(null);
     }
@@ -547,27 +587,72 @@ export function BotsView({
           {subTab === 'edit' && (
             <form onSubmit={handleSaveProfile} className="space-y-4 max-w-lg">
               <div>
-                <label className="block text-xs font-medium mb-1">Console Display Name</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="edit-bot-name" className="block text-xs font-medium">
+                    Bot Name
+                  </label>
+                  <span className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">
+                    {editName.length}/64
+                  </span>
+                </div>
                 <input
+                  id="edit-bot-name"
                   type="text"
                   required
+                  maxLength={64}
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
+                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-medium mb-1">Short Description</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="edit-bot-bio" className="block text-xs font-medium">
+                    Bot Bio (Short Description)
+                  </label>
+                  <span className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">
+                    {editShort.length}/120
+                  </span>
+                </div>
                 <input
+                  id="edit-bot-bio"
                   type="text"
+                  maxLength={120}
                   value={editShort}
                   onChange={(e) => setEditShort(e.target.value)}
-                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
+                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                />
+                <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-1">
+                  Shown on your bot's Telegram profile page (About / Bio).
+                </p>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="edit-bot-description" className="block text-xs font-medium">
+                    Bot Description (What can this bot do?)
+                  </label>
+                  <span className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">
+                    {editDescription.length}/512
+                  </span>
+                </div>
+                <textarea
+                  id="edit-bot-description"
+                  rows={3}
+                  maxLength={512}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-medium mb-1">Operational Status</label>
+                <label htmlFor="edit-bot-status" className="block text-xs font-medium mb-1">
+                  Operational Status
+                </label>
                 <select
+                  id="edit-bot-status"
                   value={editStatus}
                   onChange={(e) => setEditStatus(e.target.value as 'connected' | 'disconnected')}
                   className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
@@ -576,13 +661,34 @@ export function BotsView({
                   <option value="disconnected">Disconnected (Paused)</option>
                 </select>
               </div>
-              <button
-                type="submit"
-                disabled={busyAction === 'save'}
-                className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#6555E8] dark:bg-[#7565F6] text-white text-xs font-semibold"
-              >
-                {busyAction === 'save' ? 'Saving...' : 'Save Bot Profile'}
-              </button>
+
+              <label className="flex items-center gap-2.5 text-xs text-[#73798C] dark:text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={syncTelegram}
+                  onChange={(e) => setSyncTelegram(e.target.checked)}
+                />
+                <span>Sync Name, Bio & Description directly with Telegram Bot API</span>
+              </label>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="submit"
+                  disabled={busyAction !== null}
+                  className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  {busyAction === 'save' ? 'Saving & Syncing...' : 'Save Bot Profile'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={handlePullProfile}
+                  className="px-3.5 py-2.5 min-h-[44px] rounded-xl border border-[#E8EAF1] dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${busyAction === 'pull' ? 'animate-spin' : ''}`} />
+                  <span>{busyAction === 'pull' ? 'Syncing...' : 'Pull from Telegram'}</span>
+                </button>
+              </div>
             </form>
           )}
 

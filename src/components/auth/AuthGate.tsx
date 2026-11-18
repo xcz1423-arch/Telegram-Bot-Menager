@@ -15,11 +15,11 @@ export function AuthGate({
   onAuthenticated: (admin: AdminUser) => void;
 }) {
   const [mode, setMode] = useState<'setup' | 'login' | 'recover'>(setupRequired ? 'setup' : 'login');
-  const [username, setUsername] = useState(setupRequired ? 'admin' : '');
-  const [displayName, setDisplayName] = useState('Lead Developer');
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
-  const [seedDemo, setSeedDemo] = useState(true);
+  const [seedDemo, setSeedDemo] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -130,7 +130,6 @@ export function AuthGate({
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin"
                   className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
@@ -147,7 +146,6 @@ export function AuthGate({
                   required
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Lead Developer"
                   className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
@@ -164,7 +162,6 @@ export function AuthGate({
                   required
                   value={recoveryCode}
                   onChange={(e) => setRecoveryCode(e.target.value)}
-                  placeholder="XC-RECOVERY-2026"
                   className="w-full px-3.5 py-2.5 min-h-[44px] text-sm font-mono rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
@@ -182,7 +179,6 @@ export function AuthGate({
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
                   className="w-full pl-3.5 pr-11 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
                 <button

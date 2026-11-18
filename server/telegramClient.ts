@@ -283,6 +283,35 @@ function executeSandboxMethod(
     case 'getMyShortDescription':
       return succeed({ short_description: bot.short_description || '' });
 
+    case 'setMyName': {
+      const nextName = String(params.name ?? '').trim();
+      if (nextName.length > 64) {
+        return fail(400, 'Bad Request: BOT_NAME_INVALID (max 64 characters)');
+      }
+      if (nextName) {
+        db.prepare(`UPDATE bots SET name = ?, updated_at = datetime('now') WHERE id = ?`).run(nextName, bot.id);
+      }
+      return succeed(true);
+    }
+
+    case 'setMyShortDescription': {
+      const nextShort = String(params.short_description ?? '').trim();
+      if (nextShort.length > 120) {
+        return fail(400, 'Bad Request: BOT_SHORT_DESCRIPTION_TOO_LONG (max 120 characters)');
+      }
+      db.prepare(`UPDATE bots SET short_description = ?, updated_at = datetime('now') WHERE id = ?`).run(nextShort, bot.id);
+      return succeed(true);
+    }
+
+    case 'setMyDescription': {
+      const nextDesc = String(params.description ?? '').trim();
+      if (nextDesc.length > 512) {
+        return fail(400, 'Bad Request: BOT_DESCRIPTION_TOO_LONG (max 512 characters)');
+      }
+      db.prepare(`UPDATE bots SET description = ?, updated_at = datetime('now') WHERE id = ?`).run(nextDesc, bot.id);
+      return succeed(true);
+    }
+
     case 'sendMessage':
     case 'sendPhoto':
     case 'sendVideo':
