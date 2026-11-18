@@ -1,6 +1,5 @@
-import 'dotenv/config';
 import type { Request, Response } from 'express';
-import { createApp } from '../server/app';
+import { createApp } from '../server/app.js';
 
 const app = createApp();
 
@@ -10,7 +9,9 @@ const app = createApp();
  * Promise resolves before Express reads the request body and calls `res.end()`.
  */
 export default function handler(req: Request, res: Response) {
-  if (req.url && !req.url.startsWith('/api')) {
+  if (!req.url) {
+    req.url = '/api';
+  } else if (!req.url.startsWith('/api')) {
     req.url = `/api${req.url === '/' ? '' : req.url}`;
   }
   return app(req, res);

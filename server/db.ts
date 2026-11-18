@@ -315,7 +315,7 @@ function normalizeSqlParams(params: unknown[]): (string | number | Uint8Array | 
 }
 
 async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
-  const initFn = initSqlJs as unknown as (config?: Record<string, unknown>) => Promise<{
+  type SqlJsInit = (config?: Record<string, unknown>) => Promise<{
     Database: new (data?: ArrayLike<number>) => {
       exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
       run: (sql: string, params?: unknown[]) => void;
@@ -329,6 +329,11 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
       export: () => Uint8Array;
     };
   }>;
+  const rawInit = initSqlJs as unknown as SqlJsInit | { default?: SqlJsInit };
+  const initFn = typeof rawInit === 'function' ? rawInit : rawInit?.default;
+  if (typeof initFn !== 'function') {
+    throw new Error('Failed to load embedded SQLite WASM driver.');
+  }
   const SQL = await initFn();
 
   let initialData: Uint8Array | undefined;

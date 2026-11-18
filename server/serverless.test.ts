@@ -6,7 +6,7 @@ import {
   parseEnvBotTokens,
   signStatelessSession,
   verifyStatelessSession,
-} from './serverless';
+} from './serverless.js';
 
 test('signStatelessSession and verifyStatelessSession validate HMAC tokens and reject tampering/expiry', () => {
   const key = crypto.randomBytes(32);

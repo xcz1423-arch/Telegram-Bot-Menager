@@ -11,7 +11,7 @@ import {
   logActivity,
   pushNotification,
   setSetting,
-} from './db';
+} from './db.js';
 
 type SQLInputValue = string | number | Uint8Array | null;
 import {
@@ -24,7 +24,7 @@ import {
   hasExplicitMasterKey,
   maskToken,
   verifyPassword,
-} from './crypto';
+} from './crypto.js';
 import {
   checkLoginRateLimit,
   clearSessionCookie,
@@ -37,22 +37,22 @@ import {
   SESSION_COOKIE_NAME,
   setSessionCookie,
   hashSessionToken,
-} from './security';
-import { getSuggestedWebhookBaseUrl } from './serverless';
-import { seedDemoWorkspace } from './seed';
+} from './security.js';
+import { getSuggestedWebhookBaseUrl } from './serverless.js';
+import { seedDemoWorkspace } from './seed.js';
 import {
   BotRecord,
   executeBotMethod,
   processIncomingWebhookUpdate,
   validateTokenWithTelegram,
-} from './telegramClient';
+} from './telegramClient.js';
 import {
   redactSecrets,
   validateBotTokenFormat,
   validateCommandDescription,
   validateCommandName,
   validateWebhookUrl,
-} from '../src/lib/telegramSpec';
+} from '../src/lib/telegramSpec.js';
 
 export const apiRouter = express.Router();
 

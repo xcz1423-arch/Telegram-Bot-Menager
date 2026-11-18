@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import { getMasterKey } from './crypto';
-import { db } from './db';
-import { signStatelessSession, verifyStatelessSession } from './serverless';
+import { getMasterKey } from './crypto.js';
+import { db } from './db.js';
+import { signStatelessSession, verifyStatelessSession } from './serverless.js';
 
 export const SESSION_COOKIE_NAME = 'xc_session';
 

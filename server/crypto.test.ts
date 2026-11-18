@@ -9,7 +9,7 @@ import {
   hashPassword,
   verifyPassword,
   computeBackupChecksum,
-} from './crypto';
+} from './crypto.js';
 
 test('encryptToken and decryptToken perform AES-256-GCM round-trip and detect tampering', () => {
   const key = crypto.randomBytes(32);

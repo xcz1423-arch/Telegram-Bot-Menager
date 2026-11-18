@@ -1,13 +1,13 @@
-import { db, logActivity } from './db';
+import { db, logActivity } from './db.js';
 import {
   encryptToken,
   generateRandomToken,
   hashPassword,
   hashTokenFingerprint,
   maskToken,
-} from './crypto';
-import { getSuggestedWebhookBaseUrl, parseEnvBotTokens } from './serverless';
-import { seedDemoWorkspace } from './seed';
+} from './crypto.js';
+import { getSuggestedWebhookBaseUrl, parseEnvBotTokens } from './serverless.js';
+import { seedDemoWorkspace } from './seed.js';
 
 let bootstrapped = false;
 

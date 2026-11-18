@@ -1,6 +1,6 @@
-import { db, incrementDailyAnalytics, logActivity, pushNotification } from './db';
-import { decryptToken, encryptToken, generateRandomToken } from './crypto';
-import { redactSecrets } from '../src/lib/telegramSpec';
+import { db, incrementDailyAnalytics, logActivity, pushNotification } from './db.js';
+import { decryptToken, encryptToken, generateRandomToken } from './crypto.js';
+import { redactSecrets } from '../src/lib/telegramSpec.js';
 
 export interface BotRecord {
   id: number;

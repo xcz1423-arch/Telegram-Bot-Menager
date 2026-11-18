@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { validateBotTokenFormat } from '../src/lib/telegramSpec';
+import { validateBotTokenFormat } from '../src/lib/telegramSpec.js';
 
 export interface SignedSessionPayload {
   uid: number;

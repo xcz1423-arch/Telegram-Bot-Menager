@@ -1,8 +1,8 @@
 import express from 'express';
-import { ensureServerlessBootstrap } from './bootstrap';
-import { ensureDbReady } from './db';
-import { apiRateLimiter, securityHeaders } from './security';
-import { apiRouter } from './routes';
+import { ensureServerlessBootstrap } from './bootstrap.js';
+import { ensureDbReady } from './db.js';
+import { apiRateLimiter, securityHeaders } from './security.js';
+import { apiRouter } from './routes.js';
 
 let appReadyPromise: Promise<void> | null = null;
 

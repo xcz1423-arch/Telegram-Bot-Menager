@@ -1,5 +1,5 @@
-import { db, logActivity, pushNotification, setSetting } from './db';
-import { encryptToken, generateRandomToken, hashTokenFingerprint, maskToken } from './crypto';
+import { db, logActivity, pushNotification, setSetting } from './db.js';
+import { encryptToken, generateRandomToken, hashTokenFingerprint, maskToken } from './crypto.js';
 
 function daysAgoIso(daysAgo: number, hourOffset = 10): string {
   const d = new Date(Date.now() - daysAgo * 86400000);
