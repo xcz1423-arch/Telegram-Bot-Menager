@@ -1,19 +1,17 @@
 import 'dotenv/config';
 import type { Request, Response } from 'express';
-import { createApp, ensureAppReady } from '../server/app';
+import { createApp } from '../server/app';
 
 const app = createApp();
 
-export default async function handler(req: Request, res: Response) {
-  try {
-    await ensureAppReady();
-    return app(req, res);
-  } catch (err) {
-    console.error('[XC BOT CONTROL] Vercel function error:', err);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: err instanceof Error ? err.message : 'Internal server error',
-      });
-    }
+/**
+ * Synchronous Vercel Serverless Function entrypoint wrapping the Express app.
+ * Note: Must NOT be `async` returning `app(req, res)` directly, otherwise the
+ * Promise resolves before Express reads the request body and calls `res.end()`.
+ */
+export default function handler(req: Request, res: Response) {
+  if (req.url && !req.url.startsWith('/api')) {
+    req.url = `/api${req.url === '/' ? '' : req.url}`;
   }
+  return app(req, res);
 }

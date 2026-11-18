@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import initSqlJs from 'sql.js/dist/sql-wasm-inline.js';
 
 export interface DbRunResult {
   lastInsertRowid: number | bigint;
@@ -314,24 +315,21 @@ function normalizeSqlParams(params: unknown[]): (string | number | Uint8Array | 
 }
 
 async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
-  const mod = (await import('sql.js/dist/sql-wasm-inline.js')) as unknown as {
-    default?: (config?: Record<string, unknown>) => Promise<{
-      Database: new (data?: ArrayLike<number>) => {
-        exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
-        run: (sql: string, params?: unknown[]) => void;
-        prepare: (sql: string) => {
-          bind: (params?: unknown[]) => boolean;
-          step: () => boolean;
-          getAsObject: () => Record<string, unknown>;
-          free: () => void;
-        };
-        getRowsModified: () => number;
-        export: () => Uint8Array;
+  const initFn = initSqlJs as unknown as (config?: Record<string, unknown>) => Promise<{
+    Database: new (data?: ArrayLike<number>) => {
+      exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
+      run: (sql: string, params?: unknown[]) => void;
+      prepare: (sql: string) => {
+        bind: (params?: unknown[]) => boolean;
+        step: () => boolean;
+        getAsObject: () => Record<string, unknown>;
+        free: () => void;
       };
-    }>;
-  };
-  const initSqlJs = mod.default || (mod as unknown as () => Promise<never>);
-  const SQL = await initSqlJs();
+      getRowsModified: () => number;
+      export: () => Uint8Array;
+    };
+  }>;
+  const SQL = await initFn();
 
   let initialData: Uint8Array | undefined;
   try {
@@ -411,7 +409,17 @@ async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
 }
 
 async function createNodeSqliteDriver(dbFilePath: string): Promise<DbDriver> {
-  const { DatabaseSync } = await import('node:sqlite');
+  const builtinModule = 'node:' + 'sqlite';
+  const { DatabaseSync } = (await import(/* @vite-ignore */ builtinModule)) as {
+    DatabaseSync: new (path: string) => {
+      exec: (sql: string) => void;
+      prepare: (sql: string) => {
+        run: (...params: unknown[]) => DbRunResult;
+        get: (...params: unknown[]) => unknown;
+        all: (...params: unknown[]) => Record<string, unknown>[];
+      };
+    };
+  };
   const nativeDb = new DatabaseSync(dbFilePath);
   try {
     nativeDb.exec('PRAGMA journal_mode = WAL;');
