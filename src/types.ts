@@ -35,6 +35,7 @@ export interface BotSummary {
   connection_status: 'connected' | 'disconnected' | 'invalid_token' | 'webhook_error' | 'api_error';
   webhook_status: 'active' | 'inactive' | 'error';
   webhook_url: string | null;
+  avatar_url?: string | null;
   has_webhook_secret: boolean;
   pending_update_count: number;
   last_webhook_error: string | null;

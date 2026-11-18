@@ -1,5 +1,5 @@
-import { db, incrementDailyAnalytics, logActivity, pushNotification } from './db.js';
-import { decryptToken, encryptToken, generateRandomToken } from './crypto.js';
+import { db, getSetting, incrementDailyAnalytics, logActivity, pushNotification, setSetting } from './db.js';
+import { decryptToken, encryptToken, generateRandomToken, hashTokenFingerprint } from './crypto.js';
 import { redactSecrets } from '../src/lib/telegramSpec.js';
 
 export interface BotRecord {
@@ -237,6 +237,236 @@ export async function executeBotMethod(
   return result;
 }
 
+/**
+ * Uploads a JPEG profile photo for a connected bot using Telegram's multipart/form-data
+ * setMyProfilePhoto (InputProfilePhotoStatic) or sandbox equivalent.
+ */
+export async function setBotProfilePhoto(bot: BotRecord, jpegBuffer: Buffer): Promise<TelegramCallResult> {
+  const startedAt = Date.now();
+  let result: TelegramCallResult;
+
+  if (!jpegBuffer || jpegBuffer.length === 0) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      durationMs: 1,
+      errorCode: 400,
+      description: 'Profile photo image buffer cannot be empty.',
+      rawResponse: { ok: false, error_code: 400, description: 'Profile photo image buffer cannot be empty.' },
+    };
+  }
+
+  if (bot.mode === 'live') {
+    const token = decryptToken(bot.encrypted_token);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const form = new FormData();
+      form.append('photo', JSON.stringify({ type: 'static', photo: 'attach://photo_file' }));
+      form.append('photo_file', new Blob([new Uint8Array(jpegBuffer)], { type: 'image/jpeg' }), 'profile.jpg');
+
+      const resp = await fetch(`https://api.telegram.org/bot${token}/setMyProfilePhoto`, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+      const json = (await resp.json()) as Record<string, unknown>;
+      const durationMs = Math.max(1, Date.now() - startedAt);
+      result = {
+        ok: Boolean(json.ok),
+        httpStatus: resp.status,
+        durationMs,
+        result: json.result,
+        errorCode: typeof json.error_code === 'number' ? json.error_code : undefined,
+        description: typeof json.description === 'string' ? json.description : undefined,
+        rawResponse: json,
+      };
+    } catch (err) {
+      const durationMs = Math.max(1, Date.now() - startedAt);
+      const msg = err instanceof Error ? err.message : 'Telegram setMyProfilePhoto request failed';
+      result = {
+        ok: false,
+        httpStatus: 502,
+        durationMs,
+        errorCode: 502,
+        description: msg,
+        rawResponse: { ok: false, error_code: 502, description: msg },
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } else {
+    const durationMs = Math.max(12, Date.now() - startedAt + 18);
+    result = {
+      ok: true,
+      httpStatus: 200,
+      durationMs,
+      result: true,
+      rawResponse: { ok: true, result: true },
+    };
+  }
+
+  const safeReq = JSON.stringify({ type: 'static', bytes: jpegBuffer.length });
+  const safeRes = redactSecrets(JSON.stringify(result.rawResponse));
+
+  db.prepare(`
+    INSERT INTO api_logs (
+      bot_id, method, http_status, telegram_error_code, ok, duration_ms,
+      request_payload_json, response_payload_json, error_message
+    ) VALUES (?, 'setMyProfilePhoto', ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    bot.id,
+    result.httpStatus,
+    result.errorCode ?? null,
+    result.ok ? 1 : 0,
+    result.durationMs,
+    safeReq,
+    safeRes,
+    result.ok ? null : result.description ?? 'Unknown API error'
+  );
+
+  incrementDailyAnalytics({
+    botId: bot.id,
+    apiRequests: 1,
+    apiSuccess: result.ok ? 1 : 0,
+    apiFailed: result.ok ? 0 : 1,
+    durationMs: result.durationMs,
+  });
+
+  if (!result.ok) {
+    pushNotification({
+      botId: bot.id,
+      severity: 'error',
+      title: `Photo Update Failed on @${bot.username}`,
+      message: `setMyProfilePhoto failed (${result.errorCode || result.httpStatus}): ${result.description || 'Unknown error'}`,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Executes setWebhook, getWebhookInfo, or deleteWebhook directly using a supplied Bot Token
+ * without requiring the bot to be pre-registered in the fleet.
+ */
+export async function executeDirectWebhookMethod(params: {
+  token: string;
+  mode: 'live' | 'sandbox';
+  method: 'setWebhook' | 'getWebhookInfo' | 'deleteWebhook';
+  body?: Record<string, unknown>;
+}): Promise<TelegramCallResult> {
+  const { token, mode, method, body = {} } = params;
+  const startedAt = Date.now();
+  let result: TelegramCallResult;
+
+  if (mode === 'live') {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const url = `https://api.telegram.org/bot${token.trim()}/${method}`;
+      const hasBody = Object.keys(body).length > 0;
+      const resp = await fetch(url, {
+        method: hasBody ? 'POST' : 'GET',
+        headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+        body: hasBody ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+      const json = (await resp.json()) as Record<string, unknown>;
+      const durationMs = Math.max(1, Date.now() - startedAt);
+      result = {
+        ok: Boolean(json.ok),
+        httpStatus: resp.status,
+        durationMs,
+        result: json.result,
+        errorCode: typeof json.error_code === 'number' ? json.error_code : undefined,
+        description: typeof json.description === 'string' ? json.description : undefined,
+        rawResponse: json,
+      };
+    } catch (err) {
+      const durationMs = Math.max(1, Date.now() - startedAt);
+      const msg = err instanceof Error ? err.message : 'Telegram request failed';
+      result = {
+        ok: false,
+        httpStatus: 502,
+        durationMs,
+        errorCode: 502,
+        description: msg,
+        rawResponse: { ok: false, error_code: 502, description: msg },
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } else {
+    const key = `direct_webhook_${hashTokenFingerprint(token.trim())}`;
+    const durationMs = 18;
+    if (method === 'setWebhook') {
+      const url = String(body.url ?? '').trim();
+      if (!url.startsWith('https://')) {
+        result = {
+          ok: false,
+          httpStatus: 400,
+          durationMs,
+          errorCode: 400,
+          description: 'Bad Request: bad webhook: HTTPS url must be provided for webhook',
+          rawResponse: {
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: bad webhook: HTTPS url must be provided for webhook',
+          },
+        };
+      } else {
+        setSetting(
+          key,
+          JSON.stringify({
+            url,
+            has_custom_certificate: false,
+            pending_update_count: 0,
+            max_connections: Number(body.max_connections) || 40,
+            ip_address: '149.154.167.220',
+          })
+        );
+        result = { ok: true, httpStatus: 200, durationMs, result: true, rawResponse: { ok: true, result: true } };
+      }
+    } else if (method === 'deleteWebhook') {
+      db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
+      result = { ok: true, httpStatus: 200, durationMs, result: true, rawResponse: { ok: true, result: true } };
+    } else {
+      const rawStored = getSetting(key, '');
+      let info: Record<string, unknown> = {
+        url: '',
+        has_custom_certificate: false,
+        pending_update_count: 0,
+      };
+      if (rawStored) {
+        try {
+          info = JSON.parse(rawStored) as Record<string, unknown>;
+        } catch {
+          // ignore malformed entry
+        }
+      }
+      result = { ok: true, httpStatus: 200, durationMs, result: info, rawResponse: { ok: true, result: info } };
+    }
+  }
+
+  db.prepare(`
+    INSERT INTO api_logs (
+      bot_id, method, http_status, telegram_error_code, ok, duration_ms,
+      request_payload_json, response_payload_json, error_message
+    ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    method,
+    result.httpStatus,
+    result.errorCode ?? null,
+    result.ok ? 1 : 0,
+    result.durationMs,
+    redactSecrets(JSON.stringify(body)),
+    redactSecrets(JSON.stringify(result.rawResponse)),
+    result.ok ? null : result.description ?? 'Unknown API error'
+  );
+
+  return result;
+}
+
 function executeSandboxMethod(
   bot: BotRecord,
   method: string,
@@ -311,6 +541,13 @@ function executeSandboxMethod(
       db.prepare(`UPDATE bots SET description = ?, updated_at = datetime('now') WHERE id = ?`).run(nextDesc, bot.id);
       return succeed(true);
     }
+
+    case 'setMyProfilePhoto':
+      return succeed(true);
+
+    case 'removeMyProfilePhoto':
+      db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
+      return succeed(true);
 
     case 'sendMessage':
     case 'sendPhoto':

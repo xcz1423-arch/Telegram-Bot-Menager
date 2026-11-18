@@ -220,32 +220,56 @@ export function ToastContainer({
 }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed bottom-20 lg:bottom-5 right-4 left-4 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          role="status"
-          className="pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-700 shadow-lg"
-        >
-          {t.type === 'success' && <CheckCircle2 className="w-4 h-4 text-[#20C997] shrink-0 mt-0.5" />}
-          {t.type === 'error' && <AlertCircle className="w-4 h-4 text-[#F05B75] shrink-0 mt-0.5" />}
-          {t.type === 'info' && <Info className="w-4 h-4 text-[#22C8F6] shrink-0 mt-0.5" />}
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-[#171A2B] dark:text-slate-100">{t.title}</p>
-            {t.description && (
-              <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 break-words">{t.description}</p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => onDismiss(t.id)}
-            aria-label="Dismiss notification"
-            className="text-[#73798C] hover:text-[#171A2B] dark:text-slate-400 dark:hover:text-white p-1"
+    <div
+      aria-live="polite"
+      className="fixed top-3.5 left-3.5 right-3.5 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-[400px] z-[60] flex flex-col gap-2.5 pointer-events-none"
+    >
+      {toasts.map((t) => {
+        const accentClass =
+          t.type === 'success'
+            ? 'bg-[#20C997]'
+            : t.type === 'error'
+            ? 'bg-[#F05B75]'
+            : 'bg-[#22C8F6]';
+        const iconBgClass =
+          t.type === 'success'
+            ? 'bg-[#20C997]/12 text-[#118A66] dark:text-[#20C997]'
+            : t.type === 'error'
+            ? 'bg-[#F05B75]/12 text-[#C72544] dark:text-[#F05B75]'
+            : 'bg-[#22C8F6]/12 text-[#0D8FB8] dark:text-[#22C8F6]';
+
+        return (
+          <div
+            key={t.id}
+            role="status"
+            data-testid="toast-notification"
+            className="xc-toast-enter pointer-events-auto relative overflow-hidden flex items-start gap-3 pl-4 pr-3 py-3 rounded-2xl bg-white/95 dark:bg-[#151B2B]/95 backdrop-blur-md border border-[#E8EAF1] dark:border-slate-700/90 shadow-[0_14px_34px_rgba(9,11,20,0.18)]"
           >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
+            <span className={`absolute left-0 top-0 bottom-0 w-1 ${accentClass}`} aria-hidden="true" />
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${iconBgClass}`}>
+              {t.type === 'success' && <CheckCircle2 className="w-4 h-4" />}
+              {t.type === 'error' && <AlertCircle className="w-4 h-4" />}
+              {t.type === 'info' && <Info className="w-4 h-4" />}
+            </div>
+            <div className="flex-1 min-w-0 pt-0.5">
+              <p className="text-xs font-semibold text-[#171A2B] dark:text-slate-100 leading-snug">{t.title}</p>
+              {t.description && (
+                <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 break-words leading-relaxed">
+                  {t.description}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onDismiss(t.id)}
+              aria-label="Dismiss notification"
+              className="text-[#73798C] hover:text-[#171A2B] dark:text-slate-400 dark:hover:text-white p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

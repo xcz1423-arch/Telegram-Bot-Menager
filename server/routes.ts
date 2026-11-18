@@ -43,7 +43,9 @@ import { seedDemoWorkspace } from './seed.js';
 import {
   BotRecord,
   executeBotMethod,
+  executeDirectWebhookMethod,
   processIncomingWebhookUpdate,
+  setBotProfilePhoto,
   validateTokenWithTelegram,
 } from './telegramClient.js';
 import {
@@ -70,6 +72,7 @@ function sanitizeBotForClient(row: BotRecord) {
     connection_status: row.connection_status,
     webhook_status: row.webhook_status,
     webhook_url: row.webhook_url,
+    avatar_url: getSetting(`bot_avatar_${row.id}`, '') || null,
     has_webhook_secret: Boolean(row.webhook_secret_encrypted),
     pending_update_count: row.pending_update_count,
     last_webhook_error: row.last_webhook_error,
@@ -867,6 +870,85 @@ apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
   res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
 });
 
+apiRouter.post('/bots/:id/profile-photo', async (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+
+  const rawImage = String(req.body?.imageDataUrl ?? '').trim();
+  const rawThumb = String(req.body?.thumbnailDataUrl ?? '').trim();
+
+  const match = /^data:image\/(jpeg|jpg);base64,([A-Za-z0-9+/=]+)$/i.exec(rawImage);
+  if (!match) {
+    res.status(400).json({ error: 'Invalid profile photo format. Please upload a valid image (converted to JPEG).' });
+    return;
+  }
+
+  const jpegBuffer = Buffer.from(match[2], 'base64');
+  if (jpegBuffer.length === 0 || jpegBuffer.length > 1_500_000) {
+    res.status(400).json({ error: 'Profile photo size must be between 1 byte and 1.5 MB.' });
+    return;
+  }
+
+  const outcome = await setBotProfilePhoto(bot, jpegBuffer);
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 502).json({
+      error: `Telegram setMyProfilePhoto failed: ${outcome.description || 'Unknown error'}`,
+    });
+    return;
+  }
+
+  const validThumb = /^data:image\/(jpeg|jpg);base64,[A-Za-z0-9+/=]+$/i.test(rawThumb) && rawThumb.length <= 65_000;
+  const avatarToStore = validThumb ? rawThumb : rawImage.length <= 65_000 ? rawImage : '';
+  if (avatarToStore) {
+    setSetting(`bot_avatar_${bot.id}`, avatarToStore);
+  }
+
+  logActivity({
+    action: 'BOT_PHOTO_UPDATED',
+    botId: bot.id,
+    botName: bot.name,
+    status: 'success',
+    relatedResource: `@${bot.username}`,
+    details: 'Updated bot profile photo via setMyProfilePhoto.',
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+
+  const outcome = await executeBotMethod(bot, 'removeMyProfilePhoto', {});
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 502).json({
+      error: `Telegram removeMyProfilePhoto failed: ${outcome.description || 'Unknown error'}`,
+    });
+    return;
+  }
+
+  db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
+
+  logActivity({
+    action: 'BOT_PHOTO_REMOVED',
+    botId: bot.id,
+    botName: bot.name,
+    status: 'warning',
+    relatedResource: `@${bot.username}`,
+    details: 'Removed bot profile photo via removeMyProfilePhoto.',
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
 apiRouter.patch('/bots/:id/settings', (req, res) => {
   const bot = getBotById(Number(req.params.id));
   if (!bot) {
@@ -953,6 +1035,7 @@ apiRouter.delete('/bots/:id', (req, res) => {
     return;
   }
   db.prepare('DELETE FROM bots WHERE id = ?').run(bot.id);
+  db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
   logActivity({
     action: 'BOT_REMOVED',
     botId: null,
@@ -1438,6 +1521,191 @@ apiRouter.delete('/bots/:id/webhook', async (req, res) => {
     ipAddress: getClientIp(req),
   });
   res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+// Direct Webhook Manager endpoints (Hosted URL + Bot Token directly without requiring saved bot)
+apiRouter.post('/webhook/direct/set', async (req, res) => {
+  const rawToken = String(req.body?.token ?? '').trim();
+  const url = String(req.body?.url ?? '').trim();
+  const secretToken = String(req.body?.secretToken ?? '').trim();
+  const maxConnections = Number(req.body?.maxConnections) || 40;
+  const dropPending = Boolean(req.body?.dropPendingUpdates);
+
+  const tokenCheck = validateBotTokenFormat(rawToken, true);
+  if (!tokenCheck.valid || !tokenCheck.mode) {
+    res.status(400).json({ error: tokenCheck.error });
+    return;
+  }
+  const urlCheck = validateWebhookUrl(url);
+  if (!urlCheck.valid) {
+    res.status(400).json({ error: urlCheck.error });
+    return;
+  }
+
+  const fingerprint = hashTokenFingerprint(rawToken);
+  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
+    | BotRecord
+    | undefined;
+
+  const tgBody: Record<string, unknown> = {
+    url,
+    max_connections: Math.min(100, Math.max(1, maxConnections)),
+    drop_pending_updates: dropPending,
+  };
+  if (secretToken) {
+    tgBody.secret_token = secretToken;
+  }
+
+  const outcome = matchedBot
+    ? await executeBotMethod(matchedBot, 'setWebhook', tgBody)
+    : await executeDirectWebhookMethod({
+        token: rawToken,
+        mode: tokenCheck.mode,
+        method: 'setWebhook',
+        body: tgBody,
+      });
+
+  if (!outcome.ok) {
+    if (matchedBot) {
+      db.prepare(`UPDATE bots SET webhook_status = 'error', last_webhook_error = ? WHERE id = ?`).run(
+        outcome.description || 'setWebhook failed',
+        matchedBot.id
+      );
+    }
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 400).json({
+      ok: false,
+      error: outcome.description || 'Failed to set webhook.',
+    });
+    return;
+  }
+
+  if (matchedBot) {
+    if (secretToken) {
+      db.prepare(`
+        UPDATE bots
+        SET webhook_url = ?, webhook_status = 'active', webhook_secret_encrypted = ?, last_webhook_error = NULL, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(url, encryptToken(secretToken), matchedBot.id);
+    } else {
+      db.prepare(`
+        UPDATE bots
+        SET webhook_url = ?, webhook_status = 'active', last_webhook_error = NULL, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(url, matchedBot.id);
+    }
+  }
+
+  logActivity({
+    action: 'WEBHOOK_CONFIGURED',
+    botId: matchedBot?.id ?? null,
+    botName: matchedBot?.name ?? 'Direct Bot Token',
+    status: 'success',
+    relatedResource: url,
+    details: `Configured webhook for ${maskToken(rawToken)} (${tokenCheck.mode}).`,
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({
+    ok: true,
+    mode: tokenCheck.mode,
+    matchedBotId: matchedBot?.id ?? null,
+    message: `Webhook configured for ${maskToken(rawToken)}.`,
+  });
+});
+
+apiRouter.post('/webhook/direct/info', async (req, res) => {
+  const rawToken = String(req.body?.token ?? '').trim();
+  const tokenCheck = validateBotTokenFormat(rawToken, true);
+  if (!tokenCheck.valid || !tokenCheck.mode) {
+    res.status(400).json({ error: tokenCheck.error });
+    return;
+  }
+
+  const fingerprint = hashTokenFingerprint(rawToken);
+  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
+    | BotRecord
+    | undefined;
+
+  const outcome = matchedBot
+    ? await executeBotMethod(matchedBot, 'getWebhookInfo', {})
+    : await executeDirectWebhookMethod({
+        token: rawToken,
+        mode: tokenCheck.mode,
+        method: 'getWebhookInfo',
+      });
+
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 400).json({
+      ok: false,
+      error: outcome.description || 'Failed to fetch webhook info.',
+    });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    mode: tokenCheck.mode,
+    matchedBotId: matchedBot?.id ?? null,
+    webhookInfo: outcome.result || null,
+  });
+});
+
+apiRouter.post('/webhook/direct/delete', async (req, res) => {
+  const rawToken = String(req.body?.token ?? '').trim();
+  const dropPending = Boolean(req.body?.dropPendingUpdates);
+  const tokenCheck = validateBotTokenFormat(rawToken, true);
+  if (!tokenCheck.valid || !tokenCheck.mode) {
+    res.status(400).json({ error: tokenCheck.error });
+    return;
+  }
+
+  const fingerprint = hashTokenFingerprint(rawToken);
+  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
+    | BotRecord
+    | undefined;
+
+  const tgBody = { drop_pending_updates: dropPending };
+  const outcome = matchedBot
+    ? await executeBotMethod(matchedBot, 'deleteWebhook', tgBody)
+    : await executeDirectWebhookMethod({
+        token: rawToken,
+        mode: tokenCheck.mode,
+        method: 'deleteWebhook',
+        body: tgBody,
+      });
+
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 400).json({
+      ok: false,
+      error: outcome.description || 'Failed to delete webhook.',
+    });
+    return;
+  }
+
+  if (matchedBot) {
+    db.prepare(`
+      UPDATE bots
+      SET webhook_url = NULL, webhook_status = 'inactive', pending_update_count = 0, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(matchedBot.id);
+  }
+
+  logActivity({
+    action: 'WEBHOOK_DELETED',
+    botId: matchedBot?.id ?? null,
+    botName: matchedBot?.name ?? 'Direct Bot Token',
+    status: 'warning',
+    relatedResource: maskToken(rawToken),
+    details: `Deleted webhook for ${maskToken(rawToken)} (${tokenCheck.mode}).`,
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({
+    ok: true,
+    mode: tokenCheck.mode,
+    matchedBotId: matchedBot?.id ?? null,
+    message: `Webhook deleted for ${maskToken(rawToken)}.`,
+  });
 });
 
 // Fires a real signed webhook payload through the exact incoming webhook receiver logic

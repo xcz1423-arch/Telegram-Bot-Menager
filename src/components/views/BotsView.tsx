@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Bot,
+  Camera,
   Plus,
   RefreshCw,
   Trash2,
@@ -18,6 +19,68 @@ import {
 import { apiFetch } from '../../lib/api';
 import type { BotSummary, NavTab } from '../../types';
 import { ConfirmDialog, EmptyState, Modal, StatusBadge } from '../ui/Primitives';
+
+async function prepareBotAvatarJpegs(file: File): Promise<{ uploadDataUrl: string; thumbDataUrl: string }> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Failed to decode selected image.'));
+      el.src = objectUrl;
+    });
+
+    const side = Math.max(1, Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height));
+    const sx = Math.floor(((img.naturalWidth || img.width) - side) / 2);
+    const sy = Math.floor(((img.naturalHeight || img.height) - side) / 2);
+
+    const renderSquareJpeg = (size: number, quality: number) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D context unavailable.');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      return canvas.toDataURL('image/jpeg', quality);
+    };
+
+    return {
+      uploadDataUrl: renderSquareJpeg(512, 0.88),
+      thumbDataUrl: renderSquareJpeg(128, 0.78),
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function BotAvatarBadge({ bot, size = 'md' }: { bot: BotSummary; size?: 'sm' | 'md' | 'lg' }) {
+  const dim = size === 'sm' ? 'w-9 h-9 text-xs' : size === 'lg' ? 'w-16 h-16 text-lg' : 'w-11 h-11 text-sm';
+  const initials = (bot.name || bot.username || 'B')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p.charAt(0).toUpperCase())
+    .join('');
+
+  if (bot.avatar_url) {
+    return (
+      <img
+        src={bot.avatar_url}
+        alt={`${bot.name} profile photo`}
+        className={`${dim} rounded-full object-cover border border-[#E8EAF1] dark:border-slate-700 shrink-0`}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${dim} rounded-full bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#988DF9] font-display font-bold flex items-center justify-center border border-[#7565F6]/25 shrink-0`}
+    >
+      {initials || 'B'}
+    </div>
+  );
+}
 
 export function AddBotModal({
   open,
@@ -252,6 +315,7 @@ export function BotsView({
   const [protectContent, setProtectContent] = useState(Boolean(selectedBot?.settings?.protect_content));
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BotSummary | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
     if (selectedBot) {
@@ -352,6 +416,46 @@ export function BotsView({
     }
   };
 
+  const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !selectedBot) return;
+    if (!file.type.startsWith('image/')) {
+      onToast('error', 'Invalid File', 'Please select a PNG, JPG, or WebP image file.');
+      return;
+    }
+    setBusyAction('photo');
+    try {
+      const { uploadDataUrl, thumbDataUrl } = await prepareBotAvatarJpegs(file);
+      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
+        method: 'POST',
+        body: JSON.stringify({ imageDataUrl: uploadDataUrl, thumbnailDataUrl: thumbDataUrl }),
+      });
+      onToast('success', 'Profile Photo Updated', `New profile picture synced for @${selectedBot.username}.`);
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Photo Update Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    if (!selectedBot) return;
+    setBusyAction('remove_photo');
+    try {
+      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
+        method: 'DELETE',
+      });
+      onToast('info', 'Profile Photo Removed', `Cleared Telegram profile picture for @${selectedBot.username}.`);
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Remove Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBot) return;
@@ -433,10 +537,13 @@ export function BotsView({
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">{b.name}</div>
-                    <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate">
-                      @{b.username} · {b.mode}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <BotAvatarBadge bot={b} size="sm" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate">{b.name}</div>
+                      <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate">
+                        @{b.username} · {b.mode}
+                      </div>
                     </div>
                   </div>
                   <StatusBadge
@@ -461,16 +568,19 @@ export function BotsView({
       {selectedBot && (
         <div className="lg:col-span-8 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#E8EAF1] dark:border-slate-800">
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-lg font-display font-bold">{selectedBot.name}</h2>
-                <StatusBadge
-                  status={selectedBot.connection_status === 'connected' ? 'success' : 'warning'}
-                  label={selectedBot.connection_status}
-                />
-              </div>
-              <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-1">
-                @{selectedBot.username} · ID {selectedBot.telegram_bot_id} · Token {selectedBot.token_masked}
+            <div className="flex items-center gap-3 min-w-0">
+              <BotAvatarBadge bot={selectedBot} size="md" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h2 className="text-lg font-display font-bold truncate">{selectedBot.name}</h2>
+                  <StatusBadge
+                    status={selectedBot.connection_status === 'connected' ? 'success' : 'warning'}
+                    label={selectedBot.connection_status}
+                  />
+                </div>
+                <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-1 truncate">
+                  @{selectedBot.username} · ID {selectedBot.telegram_bot_id} · Token {selectedBot.token_masked}
+                </div>
               </div>
             </div>
 
@@ -586,6 +696,49 @@ export function BotsView({
 
           {subTab === 'edit' && (
             <form onSubmit={handleSaveProfile} className="space-y-4 max-w-lg">
+              <div className="p-4 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <BotAvatarBadge bot={selectedBot} size="lg" />
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold">Bot Profile Picture</div>
+                    <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
+                      Square JPEG synced via Telegram <code className="font-mono">setMyProfilePhoto</code>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/*"
+                    aria-label="Upload bot profile photo"
+                    onChange={handlePhotoSelected}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={busyAction !== null}
+                    onClick={() => photoInputRef.current?.click()}
+                    className="px-3 py-2 min-h-[38px] rounded-xl bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] text-white text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{busyAction === 'photo' ? 'Uploading...' : 'Change Photo'}</span>
+                  </button>
+                  {selectedBot.avatar_url && (
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={handleRemovePhoto}
+                      aria-label="Remove bot profile photo"
+                      className="px-3 py-2 min-h-[38px] rounded-xl border border-[#F05B75]/30 text-[#F05B75] hover:bg-[#F05B75]/10 text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{busyAction === 'remove_photo' ? 'Removing...' : 'Remove Photo'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label htmlFor="edit-bot-name" className="block text-xs font-medium">

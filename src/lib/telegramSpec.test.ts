@@ -90,3 +90,12 @@ test('JSON formatting and secret redaction', () => {
   assert.equal(safe.includes('my-secret'), false);
   assert.equal(safe.includes('[REDACTED_BOT_TOKEN]'), true);
 });
+
+test('TELEGRAM_API_METHODS exposes profile photo management methods', async () => {
+  const { TELEGRAM_API_METHODS } = await import('./telegramSpec');
+  const setPhoto = TELEGRAM_API_METHODS.find((m) => m.method === 'setMyProfilePhoto');
+  const removePhoto = TELEGRAM_API_METHODS.find((m) => m.method === 'removeMyProfilePhoto');
+  assert.equal(setPhoto?.category, 'bot_info');
+  assert.equal(removePhoto?.category, 'bot_info');
+});
+

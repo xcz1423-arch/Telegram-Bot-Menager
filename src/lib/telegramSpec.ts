@@ -108,6 +108,22 @@ export const TELEGRAM_API_METHODS: ApiMethodDef[] = [
       { name: 'language_code', type: 'string', description: 'Two-letter ISO 639-1 language code', placeholder: 'en' },
     ],
   },
+  {
+    method: 'setMyProfilePhoto',
+    category: 'bot_info',
+    summary: 'Change the profile photo of the bot (InputProfilePhotoStatic JPEG upload).',
+    httpMethod: 'POST',
+    params: [
+      { name: 'photo', type: 'json', required: true, description: 'InputProfilePhoto object describing the new profile photo', placeholder: '{"type":"static","photo":"attach://photo_file"}' },
+    ],
+  },
+  {
+    method: 'removeMyProfilePhoto',
+    category: 'bot_info',
+    summary: 'Remove the current profile photo of the bot.',
+    httpMethod: 'POST',
+    params: [],
+  },
   // B. Messaging
   {
     method: 'sendMessage',
