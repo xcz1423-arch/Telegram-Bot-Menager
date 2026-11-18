@@ -3,11 +3,12 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
-import { createApp } from './server/app';
+import { createApp, ensureAppReady } from './server/app';
 
 const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
+  await ensureAppReady();
   const app = createApp();
   const isProd = process.env.NODE_ENV === 'production';
 

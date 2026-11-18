@@ -1,9 +1,9 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SQLInputValue } from 'node:sqlite';
 import {
   db,
+  getDbEngineName,
   getDbPath,
   getSetting,
   incrementDailyAnalytics,
@@ -12,6 +12,8 @@ import {
   pushNotification,
   setSetting,
 } from './db';
+
+type SQLInputValue = string | number | Uint8Array | null;
 import {
   computeBackupChecksum,
   decryptToken,
@@ -1761,7 +1763,7 @@ apiRouter.get('/system/health', (req, res) => {
     deploymentMode: serverless ? 'Vercel Serverless' : 'Node.js Server',
     storageMode: serverless ? 'Serverless /tmp SQLite + Env Bootstrap' : 'Persistent Local SQLite',
     explicitMasterKeyConfigured: hasExplicitMasterKey(),
-    databaseEngine: 'SQLite (WAL Mode)',
+    databaseEngine: getDbEngineName(),
     databaseConnected: true,
     tableCount,
     dbSizeKb: Math.round((dbSizeBytes / 1024) * 10) / 10,

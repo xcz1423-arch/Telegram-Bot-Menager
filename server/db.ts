@@ -1,7 +1,23 @@
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+export interface DbRunResult {
+  lastInsertRowid: number | bigint;
+  changes: number | bigint;
+}
+
+export interface DbStatement {
+  run: (...params: unknown[]) => DbRunResult;
+  get: (...params: unknown[]) => unknown;
+  all: (...params: unknown[]) => Record<string, unknown>[];
+}
+
+export interface DbDriver {
+  engineName: string;
+  exec: (sql: string) => void;
+  prepare: (sql: string) => DbStatement;
+}
 
 export function isServerlessRuntime(): boolean {
   return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -20,20 +36,7 @@ export function getStorageDir(): string {
 const STORAGE_DIR = getStorageDir();
 const DB_PATH = path.join(STORAGE_DIR, 'xc_bot_control.sqlite');
 
-if (!fs.existsSync(STORAGE_DIR)) {
-  fs.mkdirSync(STORAGE_DIR, { recursive: true });
-}
-
-export const db = new DatabaseSync(DB_PATH);
-
-try {
-  db.exec('PRAGMA journal_mode = WAL;');
-} catch {
-  // Fallback cleanly if filesystem does not support WAL
-}
-db.exec('PRAGMA foreign_keys = ON;');
-
-db.exec(`
+const SCHEMA_SQL = `
   -- 1. admin_users
   CREATE TABLE IF NOT EXISTS admin_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,7 +284,213 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_webhook_logs_bot_time ON webhook_logs(bot_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_activity_logs_time ON activity_logs(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_analytics_daily_date ON analytics_daily(metric_date);
-`);
+`;
+
+let activeDriver: DbDriver | null = null;
+let initPromise: Promise<void> | null = null;
+
+function ensureDirWritable(dir: string): string {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  } catch {
+    const tmp = path.join(os.tmpdir(), 'xc_bot_control');
+    if (!fs.existsSync(tmp)) {
+      fs.mkdirSync(tmp, { recursive: true });
+    }
+    return tmp;
+  }
+}
+
+function normalizeSqlParams(params: unknown[]): (string | number | Uint8Array | null)[] {
+  return params.map((p) => {
+    if (p === undefined || p === null) return null;
+    if (typeof p === 'boolean') return p ? 1 : 0;
+    if (typeof p === 'number' || typeof p === 'string' || p instanceof Uint8Array) return p;
+    return String(p);
+  });
+}
+
+async function createSqlJsDriver(dbFilePath: string): Promise<DbDriver> {
+  const mod = (await import('sql.js/dist/sql-wasm-inline.js')) as unknown as {
+    default?: (config?: Record<string, unknown>) => Promise<{
+      Database: new (data?: ArrayLike<number>) => {
+        exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
+        run: (sql: string, params?: unknown[]) => void;
+        prepare: (sql: string) => {
+          bind: (params?: unknown[]) => boolean;
+          step: () => boolean;
+          getAsObject: () => Record<string, unknown>;
+          free: () => void;
+        };
+        getRowsModified: () => number;
+        export: () => Uint8Array;
+      };
+    }>;
+  };
+  const initSqlJs = mod.default || (mod as unknown as () => Promise<never>);
+  const SQL = await initSqlJs();
+
+  let initialData: Uint8Array | undefined;
+  try {
+    if (fs.existsSync(dbFilePath)) {
+      initialData = fs.readFileSync(dbFilePath);
+    }
+  } catch {
+    initialData = undefined;
+  }
+
+  const sqlDb = new SQL.Database(initialData);
+
+  const persist = () => {
+    try {
+      fs.writeFileSync(dbFilePath, Buffer.from(sqlDb.export()));
+    } catch {
+      // Continue cleanly in memory if filesystem write is unavailable
+    }
+  };
+
+  return {
+    engineName: 'SQLite (Embedded WASM)',
+    exec(sql: string) {
+      sqlDb.exec(sql);
+      if (/^\s*(CREATE|INSERT|UPDATE|DELETE|DROP|ALTER)/im.test(sql)) {
+        persist();
+      }
+    },
+    prepare(sql: string): DbStatement {
+      const isWrite = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)/i.test(sql);
+      return {
+        run(...params: unknown[]): DbRunResult {
+          const stmt = sqlDb.prepare(sql);
+          try {
+            stmt.bind(normalizeSqlParams(params));
+            stmt.step();
+          } finally {
+            stmt.free();
+          }
+          let lastId = 0;
+          const idRes = sqlDb.exec('SELECT last_insert_rowid()');
+          if (idRes.length > 0 && idRes[0].values.length > 0) {
+            lastId = Number(idRes[0].values[0][0] ?? 0);
+          }
+          const changes = sqlDb.getRowsModified();
+          if (isWrite) {
+            persist();
+          }
+          return { lastInsertRowid: lastId, changes };
+        },
+        get(...params: unknown[]): unknown {
+          const stmt = sqlDb.prepare(sql);
+          try {
+            stmt.bind(normalizeSqlParams(params));
+            if (!stmt.step()) return undefined;
+            return stmt.getAsObject();
+          } finally {
+            stmt.free();
+          }
+        },
+        all(...params: unknown[]): Record<string, unknown>[] {
+          const stmt = sqlDb.prepare(sql);
+          const rows: Record<string, unknown>[] = [];
+          try {
+            stmt.bind(normalizeSqlParams(params));
+            while (stmt.step()) {
+              rows.push(stmt.getAsObject());
+            }
+          } finally {
+            stmt.free();
+          }
+          return rows;
+        },
+      };
+    },
+  };
+}
+
+async function createNodeSqliteDriver(dbFilePath: string): Promise<DbDriver> {
+  const { DatabaseSync } = await import('node:sqlite');
+  const nativeDb = new DatabaseSync(dbFilePath);
+  try {
+    nativeDb.exec('PRAGMA journal_mode = WAL;');
+  } catch {
+    // Fallback cleanly if filesystem does not support WAL
+  }
+  return {
+    engineName: 'SQLite (WAL Mode)',
+    exec(sql: string) {
+      nativeDb.exec(sql);
+    },
+    prepare(sql: string): DbStatement {
+      const stmt = nativeDb.prepare(sql);
+      return {
+        run(...params: unknown[]) {
+          return stmt.run(...(normalizeSqlParams(params) as never[]));
+        },
+        get(...params: unknown[]) {
+          return stmt.get(...(normalizeSqlParams(params) as never[]));
+        },
+        all(...params: unknown[]) {
+          return stmt.all(...(normalizeSqlParams(params) as never[])) as Record<string, unknown>[];
+        },
+      };
+    },
+  };
+}
+
+export async function ensureDbReady(): Promise<void> {
+  if (activeDriver) return;
+  if (!initPromise) {
+    initPromise = (async () => {
+      const resolvedDir = ensureDirWritable(STORAGE_DIR);
+      const dbFilePath = path.join(resolvedDir, 'xc_bot_control.sqlite');
+
+      // Prefer pure embedded SQLite WASM on Vercel serverless to avoid experimental node:sqlite runtime errors.
+      // Locally / when supported, use native node:sqlite and transparently fall back to WASM if unavailable.
+      if (process.env.XC_FORCE_SQLJS === '1' || isServerlessRuntime()) {
+        activeDriver = await createSqlJsDriver(dbFilePath);
+      } else {
+        try {
+          activeDriver = await createNodeSqliteDriver(dbFilePath);
+        } catch {
+          activeDriver = await createSqlJsDriver(dbFilePath);
+        }
+      }
+
+      activeDriver.exec('PRAGMA foreign_keys = ON;');
+      activeDriver.exec(SCHEMA_SQL);
+    })().catch((err) => {
+      initPromise = null;
+      throw err;
+    });
+  }
+  await initPromise;
+}
+
+function getActiveDriver(): DbDriver {
+  if (!activeDriver) {
+    throw new Error('Database not initialized. Call await ensureDbReady() first.');
+  }
+  return activeDriver;
+}
+
+export const db: DbDriver = {
+  get engineName() {
+    return activeDriver?.engineName || 'SQLite';
+  },
+  exec(sql: string) {
+    getActiveDriver().exec(sql);
+  },
+  prepare(sql: string) {
+    return getActiveDriver().prepare(sql);
+  },
+};
+
+export function getDbEngineName(): string {
+  return activeDriver?.engineName || 'SQLite';
+}
 
 export function getDbPath(): string {
   return DB_PATH;
