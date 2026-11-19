@@ -21,10 +21,26 @@ async function startServer() {
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
       const indexHtml = path.join(distDir, 'index.html');
       if (fs.existsSync(indexHtml)) {
-        res.sendFile(indexHtml);
+        let html = fs.readFileSync(indexHtml, 'utf8');
+        const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+        const host = req.get('host');
+        if (host) {
+          const origin = `${proto}://${host}`;
+          html = html
+            .replaceAll(
+              'content="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"',
+              `content="${origin}/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"`
+            )
+            .replace(
+              '</head>',
+              `  <meta property="og:url" content="${origin}${req.originalUrl}" />\n    <link rel="canonical" href="${origin}${req.originalUrl}" />\n  </head>`
+            );
+        }
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
       } else {
         res.status(404).send('Production build missing. Run npm run build.');
       }

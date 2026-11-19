@@ -187,15 +187,21 @@ export function AppShell({
           sidebarCollapsed ? 'w-[74px]' : 'w-[256px]'
         }`}
       >
-        <div className="h-14 px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800/90 shrink-0">
+        <div className="h-[68px] px-3.5 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800/90 shrink-0">
           <button
             type="button"
             onClick={() => handleNavClick('dashboard')}
-            className="flex items-center gap-2.5 min-w-0 text-left"
+            className="flex items-center gap-2 min-w-0 text-left"
           >
-            <div className="w-8 h-8 rounded-lg bg-[#6555E8] dark:bg-[#7565F6] flex items-center justify-center text-white shrink-0 font-display font-bold text-xs">
-              XC
-            </div>
+            <img
+              src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+              alt={appName}
+              className={
+                sidebarCollapsed
+                  ? 'w-9 h-7 object-contain shrink-0 border-0'
+                  : 'w-20 h-14 object-contain shrink-0 border-0'
+              }
+            />
             {!sidebarCollapsed && (
               <span className="font-display font-bold text-sm tracking-tight truncate">{appName}</span>
             )}
@@ -264,11 +270,13 @@ export function AppShell({
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={() => setMobileDrawerOpen(false)} />
           <aside className="relative w-72 max-w-[85vw] h-full bg-white dark:bg-[#101421] border-r border-[#E8EAF1] dark:border-slate-800 flex flex-col z-10">
-            <div className="h-14 px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-[#6555E8] dark:bg-[#7565F6] flex items-center justify-center text-white font-display font-bold text-xs">
-                  XC
-                </div>
+            <div className="h-[68px] px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <img
+                  src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+                  alt={appName}
+                  className="w-20 h-14 object-contain shrink-0 border-0"
+                />
                 <span className="font-display font-bold text-sm">{appName}</span>
               </div>
               <button

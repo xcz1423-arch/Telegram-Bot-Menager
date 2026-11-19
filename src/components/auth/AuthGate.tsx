@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Terminal, Camera, UserPlus, AlertTriangle, X } from 'lucide-react';
+import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Camera, UserPlus, AlertTriangle, X } from 'lucide-react';
 import { ApiError, apiFetch, setCsrfToken } from '../../lib/api';
 import { prepareSquareAvatarJpeg } from '../../lib/imageUtils';
 import type { AdminUser, ThemeMode } from '../../types';
@@ -142,10 +142,12 @@ export function AuthGate({
         </div>
       )}
       <div className="max-w-5xl w-full mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-[#6555E8] dark:bg-[#7565F6] flex items-center justify-center text-white shadow-sm">
-            <Terminal className="w-4 h-4" />
-          </div>
+        <div className="flex items-center gap-3">
+          <img
+            src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+            alt="XC BOT CONTROL"
+            className="w-20 h-14 object-contain shrink-0 border-0"
+          />
           <span className="font-display font-bold text-base tracking-tight">XC BOT CONTROL</span>
         </div>
         <button
@@ -160,6 +162,13 @@ export function AuthGate({
 
       <main className="max-w-md w-full mx-auto my-8">
         <div className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-6 sm:p-8 shadow-sm">
+          <div className="flex justify-center mb-5">
+            <img
+              src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+              alt="XC BOT CONTROL Logo"
+              className="w-60 h-40 sm:w-72 sm:h-48 object-contain border-0"
+            />
+          </div>
           {mode !== 'recover' && (
             <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 mb-5">
               <button
