@@ -103,6 +103,20 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   next();
 }
 
+export function revokeSessionTokenHash(tokenHash: string, expiresAtIso?: string): void {
+  const exp = expiresAtIso || new Date(Date.now() + 14 * 86400_000).toISOString();
+  db.prepare(`
+    INSERT INTO revoked_sessions (token_hash, expires_at)
+    VALUES (?, ?)
+    ON CONFLICT(token_hash) DO UPDATE SET expires_at = excluded.expires_at, revoked_at = datetime('now')
+  `).run(tokenHash, exp);
+  try {
+    db.prepare(`DELETE FROM revoked_sessions WHERE expires_at <= datetime('now')`).run();
+  } catch {
+    // ignore cleanup issues
+  }
+}
+
 export function createAdminSession(params: {
   userId: number;
   rememberMe: boolean;
@@ -110,8 +124,8 @@ export function createAdminSession(params: {
   userAgent: string;
 }): { rawToken: string; csrfToken: string; expiresAt: Date } {
   const userRow = db
-    .prepare('SELECT username, display_name FROM admin_users WHERE id = ?')
-    .get(params.userId) as { username: string; display_name: string } | undefined;
+    .prepare('SELECT username, display_name, session_version FROM admin_users WHERE id = ?')
+    .get(params.userId) as { username: string; display_name: string; session_version?: number } | undefined;
 
   const csrfToken = crypto.randomBytes(24).toString('hex');
   const ttlMs = params.rememberMe ? 14 * 86400_000 : 12 * 3600_000;
@@ -125,6 +139,7 @@ export function createAdminSession(params: {
       csrf: csrfToken,
       exp: expiresAt.getTime(),
       jti: crypto.randomBytes(12).toString('hex'),
+      sv: userRow?.session_version ?? 1,
     },
     getMasterKey()
   );
@@ -189,6 +204,13 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
   }
 
   const tokenHash = hashSessionToken(rawToken);
+  const revoked = db
+    .prepare('SELECT token_hash FROM revoked_sessions WHERE token_hash = ?')
+    .get(tokenHash) as { token_hash: string } | undefined;
+  if (revoked) {
+    return { session: null, hadCookie: true };
+  }
+
   const row = db
     .prepare(`
       SELECT s.id as session_id, s.csrf_token, s.user_id, s.remember_me, s.expires_at,
@@ -252,7 +274,7 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
   }
 
   const dbUser = db
-    .prepare('SELECT id, username, display_name, role, avatar_url, badge, is_blocked, created_ip, last_login_at FROM admin_users WHERE id = ? OR LOWER(username) = LOWER(?)')
+    .prepare('SELECT id, username, display_name, role, avatar_url, badge, is_blocked, created_ip, last_login_at, session_version FROM admin_users WHERE id = ? OR LOWER(username) = LOWER(?)')
     .get(verified.uid, verified.u) as
     | {
         id: number;
@@ -264,11 +286,16 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
         is_blocked: number;
         created_ip: string | null;
         last_login_at: string | null;
+        session_version?: number;
       }
     | undefined;
 
   if (dbUser && Boolean(dbUser.is_blocked)) {
     return { session: null, hadCookie: true, blocked: true };
+  }
+
+  if (dbUser && verified.sv !== undefined && verified.sv < (dbUser.session_version ?? 1)) {
+    return { session: null, hadCookie: true };
   }
 
   // If users exist in DB and this stateless user was deleted, reject

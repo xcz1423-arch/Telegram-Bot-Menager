@@ -50,6 +50,7 @@ const SCHEMA_SQL = `
     badge TEXT NOT NULL DEFAULT 'none',
     is_blocked INTEGER NOT NULL DEFAULT 0,
     created_ip TEXT,
+    session_version INTEGER NOT NULL DEFAULT 1,
     recovery_hint TEXT,
     last_login_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -299,12 +300,20 @@ const SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS login_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
     username TEXT NOT NULL,
+    event_type TEXT NOT NULL DEFAULT 'login',
     success INTEGER NOT NULL,
     ip_address TEXT,
     user_agent TEXT,
     reason TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS revoked_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE INDEX IF NOT EXISTS idx_bot_updates_bot_time ON bot_updates(bot_id, received_at DESC);
@@ -329,6 +338,10 @@ function runSchemaMigrations(driver: DbDriver): void {
   ensureColumn(driver, 'admin_users', 'badge', `TEXT NOT NULL DEFAULT 'none'`);
   ensureColumn(driver, 'admin_users', 'is_blocked', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(driver, 'admin_users', 'created_ip', `TEXT`);
+  ensureColumn(driver, 'admin_users', 'session_version', `INTEGER NOT NULL DEFAULT 1`);
+  ensureColumn(driver, 'login_history', 'user_id', `INTEGER`);
+  ensureColumn(driver, 'login_history', 'event_type', `TEXT NOT NULL DEFAULT 'login'`);
+  driver.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_user_time ON login_history(user_id, created_at DESC, id DESC);`);
 
   // Guarantee at least one admin exists whenever users exist (e.g. upgraded single-admin DB)
   const adminCountRow = driver
@@ -592,6 +605,11 @@ export function bumpVaultRev(): string {
 
 export function exportDatabaseBytes(): Uint8Array | null {
   if (!activeSqlDb) return null;
+  try {
+    activeSqlDb.exec(`DELETE FROM revoked_sessions WHERE expires_at <= datetime('now');`);
+  } catch {
+    // ignore
+  }
   let exported = activeSqlDb.export();
   if (exported.length > 28_000) {
     // Keep serverless synced snapshot compact so HTTP requests stay fast and reliable
@@ -704,7 +722,7 @@ export function pushNotification(params: {
   botId?: number | null;
   targetUserId?: number | null;
   recipientRole?: 'all' | 'admin' | 'user';
-  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change';
+  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change' | 'login_alert';
   severity?: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;

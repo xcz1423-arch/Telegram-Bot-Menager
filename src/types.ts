@@ -156,7 +156,7 @@ export interface NotificationItem {
   bot_id: number | null;
   target_user_id?: number | null;
   recipient_role?: string;
-  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change' | string;
+  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change' | 'login_alert' | string;
   severity: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;

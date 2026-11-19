@@ -9,6 +9,7 @@ export interface SignedSessionPayload {
   csrf: string;
   exp: number;
   jti: string;
+  sv?: number;
 }
 
 export interface EnvBotEntry {

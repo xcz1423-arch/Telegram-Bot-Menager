@@ -36,6 +36,7 @@ import {
   requireAdmin,
   requireAuth,
   resolveSessionFromRequest,
+  revokeSessionTokenHash,
   SESSION_COOKIE_NAME,
   setSessionCookie,
   hashSessionToken,
@@ -50,6 +51,7 @@ import {
   setBotProfilePhoto,
   validateTokenWithTelegram,
 } from './telegramClient.js';
+import { formatDeviceSummary } from '../src/lib/deviceLabel.js';
 import {
   redactSecrets,
   validateBotTokenFormat,
@@ -242,7 +244,8 @@ apiRouter.post('/auth/setup', (req, res) => {
   });
   setSessionCookie(res, session.rawToken, session.expiresAt);
 
-  db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 1, ?, ?, 'Initial setup')`).run(
+  db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login', 1, ?, ?, 'Initial setup')`).run(
+    userId,
     username,
     ip,
     String(req.headers['user-agent'] || 'Unknown').slice(0, 200)
@@ -293,9 +296,24 @@ apiRouter.post('/auth/register', (req, res) => {
     return;
   }
 
-  const existing = db.prepare('SELECT id FROM admin_users WHERE LOWER(username) = LOWER(?)').get(username);
-  if (existing) {
-    res.status(409).json({ error: 'This username is already taken. Please choose another.' });
+  const existingUsername = db.prepare('SELECT id FROM admin_users WHERE LOWER(username) = LOWER(?)').get(username);
+  const existingDisplayName = db
+    .prepare('SELECT id FROM admin_users WHERE LOWER(TRIM(display_name)) = LOWER(TRIM(?))')
+    .get(displayName);
+
+  if (existingUsername || existingDisplayName) {
+    const conflict = existingUsername && existingDisplayName ? 'both' : existingUsername ? 'username' : 'name';
+    const message =
+      conflict === 'both'
+        ? 'That name and username are already taken by another user. Please try a different name and username.'
+        : conflict === 'username'
+        ? 'This username is already taken by another user. Please try a different username.'
+        : 'This name is already taken by another user. Please try a different name.';
+    res.status(409).json({
+      error: message,
+      code: 'NAME_OR_USERNAME_TAKEN',
+      conflict,
+    });
     return;
   }
 
@@ -320,7 +338,8 @@ apiRouter.post('/auth/register', (req, res) => {
   });
   setSessionCookie(res, session.rawToken, session.expiresAt);
 
-  db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 1, ?, ?, 'Account created')`).run(
+  db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login', 1, ?, ?, 'Account created')`).run(
+    userId,
     username,
     ip,
     String(req.headers['user-agent'] || 'Unknown').slice(0, 200)
@@ -461,7 +480,8 @@ apiRouter.post('/auth/login', (req, res) => {
 
   if (!user || !verifyPassword(password, user.password_hash)) {
     recordLoginAttempt(ip, false);
-    db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 0, ?, ?, 'Invalid credentials')`).run(
+    db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login_failed', 0, ?, ?, 'Invalid credentials')`).run(
+      user?.id ?? null,
       username,
       ip,
       ua
@@ -478,7 +498,8 @@ apiRouter.post('/auth/login', (req, res) => {
   }
 
   if (Boolean(user.is_blocked)) {
-    db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 0, ?, ?, 'Blocked account')`).run(
+    db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login_failed', 0, ?, ?, 'Blocked account')`).run(
+      user.id,
       user.username,
       ip,
       ua
@@ -489,7 +510,8 @@ apiRouter.post('/auth/login', (req, res) => {
 
   recordLoginAttempt(ip, true);
   db.prepare(`UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?`).run(user.id);
-  db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 1, ?, ?, 'Password login')`).run(
+  db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login', 1, ?, ?, 'Password sign-in')`).run(
+    user.id,
     user.username,
     ip,
     ua
@@ -503,11 +525,25 @@ apiRouter.post('/auth/login', (req, res) => {
   });
   setSessionCookie(res, session.rawToken, session.expiresAt);
 
+  const deviceSummary = formatDeviceSummary(ua);
+  pushNotification({
+    targetUserId: user.id,
+    recipientRole: 'user',
+    kind: 'login_alert',
+    severity: 'warning',
+    title: 'New Account Sign-In Detected',
+    message: `Account @${user.username} signed in from ${deviceSummary} (IP ${ip}). If this was not you, open Settings → Security to log out this device.`,
+    senderName: user.display_name,
+    senderAvatar: user.avatar_url,
+    senderBadge: user.badge,
+    senderIp: ip,
+  });
+
   logActivity({
     action: 'ADMIN_LOGIN',
     status: 'success',
     relatedResource: user.username,
-    details: rememberMe ? 'Signed in (Remember Me enabled).' : 'Signed in.',
+    details: rememberMe ? `Signed in from ${deviceSummary} (Remember Me enabled).` : `Signed in from ${deviceSummary}.`,
     ipAddress: ip,
   });
 
@@ -538,7 +574,14 @@ apiRouter.post('/auth/recover', (req, res) => {
     return;
   }
 
-  db.prepare(`UPDATE admin_users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`).run(
+  const activeRows = db
+    .prepare('SELECT session_token_hash, expires_at FROM admin_sessions WHERE user_id = ?')
+    .all(admin.id) as Array<{ session_token_hash: string; expires_at: string }>;
+  for (const row of activeRows) {
+    revokeSessionTokenHash(row.session_token_hash, row.expires_at);
+  }
+
+  db.prepare(`UPDATE admin_users SET password_hash = ?, session_version = session_version + 1, updated_at = datetime('now') WHERE id = ?`).run(
     hashPassword(newPassword),
     admin.id
   );
@@ -555,22 +598,35 @@ apiRouter.post('/auth/recover', (req, res) => {
   res.json({ ok: true, message: 'Password updated. You can now sign in with your new password.' });
 });
 
-// All endpoints below require authenticated single-admin session + CSRF token
+// All endpoints below require authenticated session + CSRF token
 apiRouter.use(requireAuth);
 
 apiRouter.post('/auth/logout', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const rawToken = cookies[SESSION_COOKIE_NAME];
+  const ip = getClientIp(req);
+  const ua = String(req.headers['user-agent'] || 'Unknown').slice(0, 200);
   if (rawToken) {
-    db.prepare('DELETE FROM admin_sessions WHERE session_token_hash = ?').run(hashSessionToken(rawToken));
+    const tokenHash = hashSessionToken(rawToken);
+    const existingSession = db
+      .prepare('SELECT expires_at FROM admin_sessions WHERE session_token_hash = ?')
+      .get(tokenHash) as { expires_at: string } | undefined;
+    revokeSessionTokenHash(tokenHash, existingSession?.expires_at);
+    db.prepare('DELETE FROM admin_sessions WHERE session_token_hash = ?').run(tokenHash);
   }
   clearSessionCookie(res);
+  db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'logout', 1, ?, ?, 'Signed out')`).run(
+    req.auth?.userId ?? null,
+    req.auth?.username || 'user',
+    ip,
+    ua
+  );
   logActivity({
     action: 'ADMIN_LOGOUT',
     status: 'success',
     relatedResource: req.auth?.username,
-    details: 'Administrator signed out.',
-    ipAddress: getClientIp(req),
+    details: 'User signed out.',
+    ipAddress: ip,
   });
   res.json({ ok: true });
 });
@@ -631,6 +687,18 @@ apiRouter.patch('/auth/profile', (req, res) => {
   const nextDisplayName = req.body?.displayName !== undefined ? String(req.body.displayName).trim() : user.display_name;
   if (!nextDisplayName || nextDisplayName.length < 2 || nextDisplayName.length > 64) {
     res.status(400).json({ error: 'Display name must be between 2 and 64 characters.' });
+    return;
+  }
+
+  const duplicateName = db
+    .prepare('SELECT id FROM admin_users WHERE LOWER(TRIM(display_name)) = LOWER(TRIM(?)) AND id != ?')
+    .get(nextDisplayName, user.id);
+  if (duplicateName) {
+    res.status(409).json({
+      error: 'This name is already taken by another user. Please try a different name.',
+      code: 'NAME_OR_USERNAME_TAKEN',
+      conflict: 'name',
+    });
     return;
   }
 
@@ -712,13 +780,74 @@ apiRouter.get('/auth/sessions', (req, res) => {
     .all(req.auth!.userId) as Record<string, unknown>[];
 
   const loginHistory = db
-    .prepare(`SELECT id, username, success, ip_address, user_agent, reason, created_at FROM login_history ORDER BY created_at DESC LIMIT 20`)
-    .all();
+    .prepare(`
+      SELECT id, user_id, username, event_type, success, ip_address, user_agent, reason, created_at
+      FROM login_history
+      WHERE user_id = ? OR (user_id IS NULL AND LOWER(username) = LOWER(?))
+      ORDER BY created_at DESC, id DESC
+      LIMIT 40
+    `)
+    .all(req.auth!.userId, req.auth!.username);
 
   res.json({
     currentSessionId: req.auth!.sessionId,
     sessions,
     loginHistory,
+  });
+});
+
+apiRouter.post('/auth/sessions/revoke-others', (req, res) => {
+  const userId = req.auth!.userId;
+  const currentSessionId = req.auth!.sessionId;
+  const ip = getClientIp(req);
+  const ua = String(req.headers['user-agent'] || 'Unknown').slice(0, 200);
+
+  const allUserSessions = db
+    .prepare('SELECT id, session_token_hash, expires_at FROM admin_sessions WHERE user_id = ?')
+    .all(userId) as Array<{ id: number; session_token_hash: string; expires_at: string }>;
+
+  let revokedCount = 0;
+  for (const s of allUserSessions) {
+    if (s.id !== currentSessionId) {
+      revokeSessionTokenHash(s.session_token_hash, s.expires_at);
+      revokedCount += 1;
+    }
+  }
+
+  db.prepare(`UPDATE admin_users SET session_version = session_version + 1, updated_at = datetime('now') WHERE id = ?`).run(userId);
+  db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(userId);
+
+  const fresh = createAdminSession({
+    userId,
+    rememberMe: req.auth!.rememberMe,
+    ipAddress: ip,
+    userAgent: ua,
+  });
+  setSessionCookie(res, fresh.rawToken, fresh.expiresAt);
+
+  db.prepare(`
+    INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason)
+    VALUES (?, ?, 'session_revoked', 1, ?, ?, ?)
+  `).run(
+    userId,
+    req.auth!.username,
+    ip,
+    ua,
+    revokedCount > 0 ? `Logged out all other devices (${revokedCount})` : 'Logged out all other devices'
+  );
+
+  logActivity({
+    action: 'SESSIONS_REVOKED_ALL',
+    status: 'warning',
+    relatedResource: `@${req.auth!.username}`,
+    details: `Signed out all other sessions from ${formatDeviceSummary(ua)} (${ip}).`,
+    ipAddress: ip,
+  });
+
+  res.json({
+    ok: true,
+    revokedCount,
+    csrfToken: fresh.csrfToken,
   });
 });
 
@@ -728,7 +857,39 @@ apiRouter.delete('/auth/sessions/:id', (req, res) => {
     res.status(400).json({ error: 'Use Sign Out to end your active session.' });
     return;
   }
+  const target = db
+    .prepare('SELECT id, session_token_hash, expires_at, ip_address, user_agent FROM admin_sessions WHERE id = ? AND user_id = ?')
+    .get(id, req.auth!.userId) as
+    | { id: number; session_token_hash: string; expires_at: string; ip_address: string | null; user_agent: string | null }
+    | undefined;
+
+  if (!target) {
+    res.status(404).json({ error: 'Session not found or already logged out.' });
+    return;
+  }
+
+  revokeSessionTokenHash(target.session_token_hash, target.expires_at);
   db.prepare('DELETE FROM admin_sessions WHERE id = ? AND user_id = ?').run(id, req.auth!.userId);
+
+  const ip = getClientIp(req);
+  db.prepare(`
+    INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason)
+    VALUES (?, ?, 'session_revoked', 1, ?, ?, 'Logged out remotely')
+  `).run(
+    req.auth!.userId,
+    req.auth!.username,
+    target.ip_address || ip,
+    target.user_agent || 'Unknown'
+  );
+
+  logActivity({
+    action: 'SESSION_REVOKED',
+    status: 'warning',
+    relatedResource: `@${req.auth!.username}`,
+    details: `Logged out remote session (${formatDeviceSummary(target.user_agent)} · ${target.ip_address || 'Unknown IP'}).`,
+    ipAddress: ip,
+  });
+
   res.json({ ok: true });
 });
 
@@ -2461,8 +2622,17 @@ apiRouter.patch('/admin/users/:id/block', requireAdmin, (req, res) => {
   }
 
   const nextBlocked = req.body?.blocked !== undefined ? Boolean(req.body.blocked) : !Boolean(target.is_blocked);
-  db.prepare(`UPDATE admin_users SET is_blocked = ?, updated_at = datetime('now') WHERE id = ?`).run(nextBlocked ? 1 : 0, target.id);
+  db.prepare(`UPDATE admin_users SET is_blocked = ?, session_version = session_version + 1, updated_at = datetime('now') WHERE id = ?`).run(
+    nextBlocked ? 1 : 0,
+    target.id
+  );
   if (nextBlocked) {
+    const activeRows = db
+      .prepare('SELECT session_token_hash, expires_at FROM admin_sessions WHERE user_id = ?')
+      .all(target.id) as Array<{ session_token_hash: string; expires_at: string }>;
+    for (const row of activeRows) {
+      revokeSessionTokenHash(row.session_token_hash, row.expires_at);
+    }
     db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(target.id);
   }
 
@@ -2551,6 +2721,12 @@ apiRouter.delete('/admin/users/:id', requireAdmin, (req, res) => {
     return;
   }
 
+  const targetSessions = db
+    .prepare('SELECT session_token_hash, expires_at FROM admin_sessions WHERE user_id = ?')
+    .all(target.id) as Array<{ session_token_hash: string; expires_at: string }>;
+  for (const row of targetSessions) {
+    revokeSessionTokenHash(row.session_token_hash, row.expires_at);
+  }
   db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(target.id);
   db.prepare('DELETE FROM admin_users WHERE id = ?').run(target.id);
 

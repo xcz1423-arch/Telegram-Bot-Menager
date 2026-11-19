@@ -19,8 +19,15 @@ import {
   Megaphone,
   History,
   Send,
+  Smartphone,
+  Monitor,
+  LogIn,
+  ShieldAlert,
+  Globe,
+  Clock,
 } from 'lucide-react';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, setCsrfToken } from '../../lib/api';
+import { formatDeviceSummary, isMobileUserAgent } from '../../lib/deviceLabel';
 import { prepareSquareAvatarJpeg } from '../../lib/imageUtils';
 import type { AdminAuditEntry, AdminUser, BadgeId, ThemeMode, UserAccountSummary } from '../../types';
 import { ConfirmDialog, StatusBadge } from '../ui/Primitives';
@@ -101,9 +108,23 @@ export function SettingsHealthBackupView({
   // Password change & sessions
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [sessions, setSessions] = useState<Array<{ id: number; user_agent: string; ip_address: string; last_seen_at: string }>>([]);
+  const [sessions, setSessions] = useState<
+    Array<{ id: number; user_agent: string; ip_address: string; remember_me?: number; last_seen_at: string; created_at?: string }>
+  >([]);
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
-  const [loginHistory, setLoginHistory] = useState<Array<{ id: number; username: string; success: number; ip_address: string; reason: string; created_at: string }>>([]);
+  const [loginHistory, setLoginHistory] = useState<
+    Array<{
+      id: number;
+      username: string;
+      event_type?: string;
+      success: number;
+      ip_address: string;
+      user_agent?: string;
+      reason: string;
+      created_at: string;
+    }>
+  >([]);
+  const [revokingSessions, setRevokingSessions] = useState(false);
 
   // Health
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -143,17 +164,24 @@ export function SettingsHealthBackupView({
     }
   };
 
+  const loadSecurityData = async () => {
+    try {
+      const res = await apiFetch<{ currentSessionId: number; sessions: typeof sessions; loginHistory: typeof loginHistory }>(
+        '/api/auth/sessions'
+      );
+      setCurrentSessionId(res.currentSessionId);
+      setSessions(res.sessions);
+      setLoginHistory(res.loginHistory);
+    } catch {
+      // ignore transient error
+    }
+  };
+
   useEffect(() => {
     if (subTab === 'users' && isAdmin) {
       loadAdminUsersAndAudit();
     } else if (subTab === 'security') {
-      apiFetch<{ currentSessionId: number; sessions: typeof sessions; loginHistory: typeof loginHistory }>('/api/auth/sessions').then(
-        (res) => {
-          setCurrentSessionId(res.currentSessionId);
-          setSessions(res.sessions);
-          setLoginHistory(res.loginHistory);
-        }
-      );
+      loadSecurityData();
     } else if (subTab === 'health') {
       apiFetch<HealthInfo>('/api/system/health').then(setHealth);
     }
@@ -878,40 +906,185 @@ export function SettingsHealthBackupView({
             </button>
           </form>
 
-          <div className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-5 space-y-4">
-            <h3 className="text-sm font-semibold">Active Sessions & Login History</h3>
-            <div className="space-y-2">
-              {sessions.map((s) => (
-                <div key={s.id} className="p-3 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0">
-                    <div className="font-mono truncate">{s.ip_address} · {s.id === currentSessionId ? 'Current Session' : 'Session'}</div>
-                    <div className="text-[11px] text-[#73798C] truncate">{s.user_agent}</div>
-                  </div>
-                  {s.id !== currentSessionId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch(`/api/auth/sessions/${s.id}`, { method: 'DELETE' });
-                        setSessions(sessions.filter((x) => x.id !== s.id));
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-[#F05B75] border border-[#F05B75]/30 inline-flex items-center gap-1"
-                    >
-                      <LogOut className="w-3 h-3" /> Revoke
-                    </button>
-                  )}
-                </div>
-              ))}
+          <div className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-5 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-[#7565F6]" />
+                  <span>Active Sessions & Remote Logout</span>
+                </h3>
+                <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
+                  Log out unrecognized devices immediately to protect your account.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={revokingSessions}
+                onClick={async () => {
+                  setRevokingSessions(true);
+                  try {
+                    const res = await apiFetch<{ ok: boolean; revokedCount: number; csrfToken?: string }>(
+                      '/api/auth/sessions/revoke-others',
+                      { method: 'POST' }
+                    );
+                    if (res.csrfToken) setCsrfToken(res.csrfToken);
+                    await loadSecurityData();
+                    onToast(
+                      'success',
+                      'Other Devices Logged Out',
+                      res.revokedCount > 0
+                        ? `Remotely signed out ${res.revokedCount} other session(s).`
+                        : 'All previous session tokens have been invalidated.'
+                    );
+                  } catch (err) {
+                    onToast('error', 'Remote Logout Failed', err instanceof Error ? err.message : undefined);
+                  } finally {
+                    setRevokingSessions(false);
+                  }
+                }}
+                className="px-3 py-1.5 min-h-[36px] rounded-xl text-[11px] font-semibold text-[#F05B75] bg-[#F05B75]/10 border border-[#F05B75]/30 hover:bg-[#F05B75]/15 inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log Out All Other Devices</span>
+              </button>
             </div>
 
-            <div className="pt-3 border-t border-[#E8EAF1] dark:border-slate-800 space-y-1.5 max-h-48 overflow-y-auto">
-              {loginHistory.map((h) => (
-                <div key={h.id} className="flex items-center justify-between text-xs gap-2">
-                  <span className="truncate">
-                    {h.username} · {h.reason}
-                  </span>
-                  <StatusBadge status={h.success ? 'success' : 'danger'} label={h.success ? 'OK' : 'Failed'} />
+            <div className="space-y-2">
+              {sessions.length === 0 ? (
+                <p className="text-xs text-[#73798C] dark:text-slate-400 py-2">No active session records found.</p>
+              ) : (
+                sessions.map((s) => {
+                  const isCurrent = s.id === currentSessionId;
+                  const isMobile = isMobileUserAgent(s.user_agent);
+                  const deviceLabel = formatDeviceSummary(s.user_agent);
+                  return (
+                    <div
+                      key={s.id}
+                      className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                        isCurrent
+                          ? 'bg-[#20C997]/6 border-[#20C997]/30'
+                          : 'bg-[#F6F7FB] dark:bg-[#101421] border-[#E8EAF1] dark:border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                            isCurrent
+                              ? 'bg-[#20C997]/15 text-[#20C997]'
+                              : 'bg-[#7565F6]/12 text-[#7565F6] dark:text-[#A599FF]'
+                          }`}
+                        >
+                          {isMobile ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-semibold text-[#171A2B] dark:text-slate-100">{deviceLabel}</span>
+                            {isCurrent && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-[#20C997]/15 text-[#118A66] dark:text-[#20C997] text-[10px] font-semibold">
+                                Current Device
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] font-mono text-[#73798C] dark:text-slate-400">
+                            <span data-no-smallcaps="true" className="inline-flex items-center gap-1 text-[#22C8F6]">
+                              <Globe className="w-3 h-3" />
+                              {s.ip_address || 'Unknown IP'}
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {s.last_seen_at}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {!isCurrent && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await apiFetch(`/api/auth/sessions/${s.id}`, { method: 'DELETE' });
+                              onToast('success', 'Device Logged Out', `Session from ${s.ip_address} was signed out.`);
+                              await loadSecurityData();
+                            } catch (err) {
+                              onToast('error', 'Failed to Log Out Device', err instanceof Error ? err.message : undefined);
+                            }
+                          }}
+                          className="px-2.5 py-1.5 min-h-[34px] rounded-lg text-[11px] font-semibold text-[#F05B75] border border-[#F05B75]/30 hover:bg-[#F05B75]/10 inline-flex items-center gap-1 shrink-0"
+                        >
+                          <LogOut className="w-3 h-3" />
+                          <span>Log Out</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-[#E8EAF1] dark:border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold flex items-center gap-1.5 text-[#171A2B] dark:text-slate-100">
+                  <History className="w-3.5 h-3.5 text-[#7565F6]" />
+                  <span>Login & Logout Activity Log</span>
+                </h4>
+                <span className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">
+                  {loginHistory.length} events
+                </span>
+              </div>
+
+              {loginHistory.length === 0 ? (
+                <p className="text-xs text-[#73798C] dark:text-slate-400 py-2">No login or logout events recorded yet.</p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {loginHistory.map((h) => {
+                    const evt = h.event_type || (h.success ? 'login' : 'login_failed');
+                    const isLogin = evt === 'login';
+                    const isLogout = evt === 'logout';
+                    const isRevoked = evt === 'session_revoked';
+                    const badgeStyle = isLogin
+                      ? { label: 'Sign In', cls: 'bg-[#20C997]/15 text-[#118A66] dark:text-[#20C997] border-[#20C997]/30', Icon: LogIn }
+                      : isLogout
+                      ? { label: 'Sign Out', cls: 'bg-[#22C8F6]/15 text-[#0E8BB2] dark:text-[#22C8F6] border-[#22C8F6]/30', Icon: LogOut }
+                      : isRevoked
+                      ? { label: 'Remote Logout', cls: 'bg-[#F5B942]/15 text-[#C68A12] dark:text-[#F5B942] border-[#F5B942]/30', Icon: ShieldAlert }
+                      : { label: 'Failed', cls: 'bg-[#F05B75]/15 text-[#F05B75] border-[#F05B75]/30', Icon: ShieldAlert };
+                    const EventIcon = badgeStyle.Icon;
+
+                    return (
+                      <div
+                        key={h.id}
+                        className="p-2.5 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800/80 flex items-start justify-between gap-2.5 text-xs"
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <div className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 ${badgeStyle.cls}`}>
+                            <EventIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`px-1.5 py-0.5 rounded-full border text-[10px] font-semibold ${badgeStyle.cls}`}>
+                                {badgeStyle.label}
+                              </span>
+                              <span data-no-smallcaps="true" className="font-mono text-[11px] font-medium text-[#171A2B] dark:text-slate-100">
+                                @{h.username}
+                              </span>
+                              <span className="text-[11px] text-[#73798C] dark:text-slate-400">· {h.reason}</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[#73798C] dark:text-slate-500">
+                              <span>{formatDeviceSummary(h.user_agent)}</span>
+                              <span data-no-smallcaps="true" className="text-[#22C8F6]">
+                                {h.ip_address || 'Unknown IP'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <span className="font-mono text-[10px] text-[#73798C] dark:text-slate-500 shrink-0">
+                          {h.created_at}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
             </div>
           </div>
         </div>

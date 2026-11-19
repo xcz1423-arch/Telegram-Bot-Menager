@@ -10,9 +10,13 @@ export function getCsrfToken(): string {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code?: string;
+  conflict?: string;
+  constructor(message: string, status: number, code?: string, conflict?: string) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.conflict = conflict;
   }
 }
 
@@ -119,7 +123,9 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
 
   if (!res.ok) {
     const errMsg = typeof json.error === 'string' ? json.error : `Request failed (${res.status})`;
-    throw new ApiError(errMsg, res.status);
+    const errCode = typeof json.code === 'string' ? json.code : undefined;
+    const errConflict = typeof json.conflict === 'string' ? json.conflict : undefined;
+    throw new ApiError(errMsg, res.status, errCode, errConflict);
   }
 
   if (typeof json._vault === 'string' && typeof json._vaultRev === 'string') {

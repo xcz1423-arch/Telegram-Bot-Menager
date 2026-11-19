@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Terminal, Camera, UserPlus } from 'lucide-react';
-import { apiFetch, setCsrfToken } from '../../lib/api';
+import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Terminal, Camera, UserPlus, AlertTriangle, X } from 'lucide-react';
+import { ApiError, apiFetch, setCsrfToken } from '../../lib/api';
 import { prepareSquareAvatarJpeg } from '../../lib/imageUtils';
 import type { AdminUser, ThemeMode } from '../../types';
 
@@ -28,6 +28,7 @@ export function AuthGate({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(blockedMessage || null);
   const [info, setInfo] = useState<string | null>(null);
+  const [conflictToast, setConflictToast] = useState<{ title: string; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleAvatarSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,6 +48,7 @@ export function AuthGate({
     e.preventDefault();
     setError(null);
     setInfo(null);
+    setConflictToast(null);
 
     if (mode === 'register') {
       if (!avatarDataUrl) {
@@ -98,7 +100,17 @@ export function AuthGate({
         setMode('login');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed.');
+      const msg = err instanceof Error ? err.message : 'Authentication failed.';
+      setError(msg);
+      if (err instanceof ApiError && (err.code === 'NAME_OR_USERNAME_TAKEN' || err.status === 409)) {
+        const title =
+          err.conflict === 'name'
+            ? 'Name Already In Use'
+            : err.conflict === 'username'
+            ? 'Username Already In Use'
+            : 'Name or Username Unavailable';
+        setConflictToast({ title, message: msg });
+      }
     } finally {
       setLoading(false);
     }
@@ -106,6 +118,29 @@ export function AuthGate({
 
   return (
     <div className="min-h-screen flex flex-col justify-between bg-[#F6F7FB] dark:bg-[#090B14] text-[#171A2B] dark:text-slate-100 px-4 py-6 sm:px-6">
+      {conflictToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 rounded-2xl bg-white dark:bg-[#151B2B] border border-[#F5B942]/45 shadow-2xl p-3.5 flex items-start gap-3"
+        >
+          <div className="w-8 h-8 rounded-xl bg-[#F5B942]/15 text-[#D99B16] dark:text-[#F5B942] flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1 text-xs">
+            <div className="font-semibold text-[#171A2B] dark:text-slate-100">{conflictToast.title}</div>
+            <p className="text-[#73798C] dark:text-slate-300 mt-0.5 leading-relaxed">{conflictToast.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setConflictToast(null)}
+            aria-label="Dismiss notification"
+            className="p-1 rounded-lg text-[#73798C] hover:text-[#171A2B] dark:hover:text-white shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       <div className="max-w-5xl w-full mx-auto flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-xl bg-[#6555E8] dark:bg-[#7565F6] flex items-center justify-center text-white shadow-sm">

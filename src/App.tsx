@@ -204,9 +204,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (admin) {
-      loadWorkspaceData();
-    }
+    if (!admin) return;
+    loadWorkspaceData();
+    const timer = window.setInterval(() => {
+      apiFetch<{ notifications: NotificationItem[]; unread: number }>('/api/notifications')
+        .then((notifRes) => {
+          setNotifications(notifRes.notifications);
+          setUnreadCount(notifRes.unread);
+        })
+        .catch(() => {
+          // ignore transient poll failures
+        });
+    }, 20000);
+    return () => window.clearInterval(timer);
   }, [admin, loadWorkspaceData]);
 
   const handleLogout = async () => {

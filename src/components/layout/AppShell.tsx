@@ -28,6 +28,7 @@ import {
   Globe,
   Megaphone,
   UserPlus,
+  ShieldAlert,
 } from 'lucide-react';
 import type { AdminUser, BotSummary, NavTab, NotificationItem, ThemeMode } from '../../types';
 import { Modal } from '../ui/Primitives';
@@ -481,13 +482,19 @@ export function AppShell({
                         <div
                           key={n.id}
                           className={`p-2.5 rounded-xl text-xs border transition-colors ${
-                            n.is_read
+                            n.kind === 'login_alert' && !n.is_read
+                              ? 'border-[#F5B942]/45 bg-[#F5B942]/8'
+                              : n.is_read
                               ? 'border-transparent bg-slate-50/60 dark:bg-[#101421]/60'
                               : 'border-[#7565F6]/30 bg-[#7565F6]/5'
                           }`}
                         >
                           <div className="flex items-start gap-2.5">
-                            {n.sender_avatar ? (
+                            {n.kind === 'login_alert' ? (
+                              <div className="w-8 h-8 rounded-full bg-[#F5B942]/15 text-[#D99B16] dark:text-[#F5B942] flex items-center justify-center shrink-0 mt-0.5 border border-[#F5B942]/30">
+                                <ShieldAlert className="w-4 h-4" />
+                              </div>
+                            ) : n.sender_avatar ? (
                               <img
                                 src={n.sender_avatar}
                                 alt={n.sender_name || 'User'}
@@ -507,13 +514,19 @@ export function AppShell({
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-1.5">
                                 <span className="font-semibold text-[#171A2B] dark:text-slate-100 truncate">{n.title}</span>
-                                <VerifiedBadgeIcon badge={n.sender_badge} size="xs" />
+                                {n.kind === 'login_alert' ? (
+                                  <span className="px-1.5 py-0.5 rounded-full bg-[#F5B942]/15 text-[#D99B16] dark:text-[#F5B942] text-[9px] font-semibold shrink-0">
+                                    Alert
+                                  </span>
+                                ) : (
+                                  <VerifiedBadgeIcon badge={n.sender_badge} size="xs" />
+                                )}
                               </div>
                               <p className="text-[#73798C] dark:text-slate-300 mt-0.5 leading-relaxed break-words">{n.message}</p>
                               <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[#73798C] dark:text-slate-500">
                                 {n.sender_name && <span>By <span data-no-smallcaps="true">{n.sender_name}</span></span>}
                                 {n.sender_ip && (
-                                  <span className="inline-flex items-center gap-0.5 text-[#22C8F6]">
+                                  <span className="inline-flex items-center gap-0.5 text-[#22C8F6]" data-no-smallcaps="true">
                                     <Globe className="w-2.5 h-2.5" />
                                     {n.sender_ip}
                                   </span>
