@@ -588,3 +588,27 @@ export function redactSecrets(input: string): string {
     .replace(/(bot)\d{6,15}:[A-Za-z0-9_-]{20,64}/gi, '$1[REDACTED_BOT_TOKEN]')
     .replace(/("?(?:secret_token|password|password_hash|token|api_key|authorization)"?\s*:\s*)"[^"]*"/gi, '$1"[REDACTED]"');
 }
+
+export const MAX_REPEAT_AMOUNT = 1000;
+
+/**
+ * Keeps numeric digits while allowing the user to clear the field completely ("")
+ * so Backspace never snaps back to 1 mid-edit.
+ */
+export function sanitizeRepeatAmountInput(raw: string): string {
+  const digits = raw.replace(/[^\d]/g, '');
+  if (!digits) return '';
+  const num = Number.parseInt(digits, 10);
+  if (!Number.isFinite(num)) return '';
+  if (num > MAX_REPEAT_AMOUNT) return String(MAX_REPEAT_AMOUNT);
+  return String(num);
+}
+
+export function parseRepeatAmount(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const num = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(num) || num < 1) return null;
+  return Math.min(MAX_REPEAT_AMOUNT, num);
+}
+

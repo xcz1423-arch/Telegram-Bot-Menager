@@ -99,6 +99,44 @@ apiRouter.get('/health', (_req, res) => {
   res.json({ ok: true, status: 'operational' });
 });
 
+apiRouter.get('/og-html', (req, res) => {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
+    .split(',')[0]
+    .trim()
+    .replace(/[^a-z]/gi, '') || 'https';
+  const rawHost = String(req.get('host') || 'telegram-bot-manager.vercel.app').replace(/[^a-zA-Z0-9.:-]/g, '');
+  const origin = `${proto}://${rawHost}`;
+  const ogImage = `${origin}/og-preview.jpg`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>xᴄ ʙᴏᴛ ᴄᴏɴᴛʀᴏʟ — ᴀᴅᴠᴀɴᴄᴇᴅ ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴄᴏɴsᴏʟᴇ</title>
+    <meta name="description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta property="og:site_name" content="XC BOT CONTROL" />
+    <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
+    <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${origin}/" />
+    <meta property="og:image" content="${ogImage}" />
+    <meta property="og:image:secure_url" content="${ogImage}" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="XC BOT CONTROL Logo" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="XC BOT CONTROL — Advanced Developer Console" />
+    <meta name="twitter:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta name="twitter:image" content="${ogImage}" />
+  </head>
+  <body>
+    <p>XC BOT CONTROL — Advanced Developer Console</p>
+  </body>
+</html>`);
+});
+
 // Telegram Incoming Webhook Endpoint
 apiRouter.post('/webhook/:botKey', (req, res) => {
   const { botKey } = req.params;
@@ -1518,7 +1556,7 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
         .filter(Boolean);
   const targetChatIds = Array.from(new Set(rawChatIds));
   const requestedRepeat = Number(req.body?.repeatCount ?? 1);
-  const repeatCount = Number.isFinite(requestedRepeat) ? Math.min(50, Math.max(1, Math.floor(requestedRepeat))) : 1;
+  const repeatCount = Number.isFinite(requestedRepeat) ? Math.min(1000, Math.max(1, Math.floor(requestedRepeat))) : 1;
 
   const text = String(req.body?.text ?? '');
   const mediaUrl = String(req.body?.mediaUrl ?? '').trim();
@@ -1531,9 +1569,9 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
     res.status(400).json({ error: 'At least one Target Chat ID is required.' });
     return;
   }
-  if (targetChatIds.length * repeatCount > 100) {
+  if (targetChatIds.length * repeatCount > 1000) {
     res.status(400).json({
-      error: `Total dispatch burst (${targetChatIds.length} chats × ${repeatCount} repeats = ${targetChatIds.length * repeatCount}) exceeds the 100-message safety limit per batch.`,
+      error: `Total dispatch burst (${targetChatIds.length} chats × ${repeatCount} repeats = ${targetChatIds.length * repeatCount}) exceeds the 1000-message safety limit per batch.`,
     });
     return;
   }

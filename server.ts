@@ -31,12 +31,16 @@ async function startServer() {
           const origin = `${proto}://${host}`;
           html = html
             .replaceAll(
-              'content="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"',
-              `content="${origin}/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"`
+              'https://telegram-bot-manager.vercel.app/og-preview.jpg',
+              `${origin}/og-preview.jpg`
+            )
+            .replaceAll(
+              'content="https://telegram-bot-manager.vercel.app/"',
+              `content="${origin}${req.originalUrl}"`
             )
             .replace(
               '</head>',
-              `  <meta property="og:url" content="${origin}${req.originalUrl}" />\n    <link rel="canonical" href="${origin}${req.originalUrl}" />\n  </head>`
+              `    <link rel="canonical" href="${origin}${req.originalUrl}" />\n  </head>`
             );
         }
         res.setHeader('Content-Type', 'text/html; charset=utf-8');

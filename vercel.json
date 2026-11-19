@@ -15,7 +15,18 @@
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|assets/|og-preview\\.jpg|favicon\\.ico).*)",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(TelegramBot|Twitterbot|WhatsApp|Discordbot|facebookexternalhit|Slackbot|LinkedInBot|vkShare|SkypeUriPreview).*"
+        }
+      ],
+      "destination": "/api/og-html"
+    },
+    {
+      "source": "/((?!api/|assets/|og-preview\\.jpg|favicon\\.ico).*)",
       "destination": "/index.html"
     }
   ],
@@ -25,6 +36,12 @@
       "headers": [
         { "key": "Cache-Control", "value": "no-store" },
         { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    },
+    {
+      "source": "/og-preview.jpg",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400" }
       ]
     },
     {

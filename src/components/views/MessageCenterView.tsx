@@ -14,6 +14,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
+import { parseRepeatAmount, sanitizeRepeatAmountInput } from '../../lib/telegramSpec';
 import type { BotChat, BotMessage, BotSummary, KeyboardTemplate } from '../../types';
 import { CopyButton, EmptyState, Modal, StatusBadge } from '../ui/Primitives';
 
@@ -78,7 +79,9 @@ export function MessageCenterView({
 
   const [disableNotification, setDisableNotification] = useState(false);
   const [protectContent, setProtectContent] = useState(false);
-  const [repeatCount, setRepeatCount] = useState<number>(1);
+  const [repeatCountInput, setRepeatCountInput] = useState<string>('1');
+  const parsedRepeatCount = parseRepeatAmount(repeatCountInput);
+  const activeRepeatCount = parsedRepeatCount ?? 0;
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [expandedMsgId, setExpandedMsgId] = useState<number | null>(null);
@@ -205,7 +208,7 @@ export function MessageCenterView({
       const body: Record<string, unknown> = {
         messageType,
         chatIds: selectedChatIds,
-        repeatCount: Math.min(50, Math.max(1, Math.floor(Number(repeatCount) || 1))),
+        repeatCount: parsedRepeatCount ?? 1,
         parseMode,
         text,
         mediaUrl,
@@ -377,22 +380,19 @@ export function MessageCenterView({
 
               <div className="sm:col-span-4">
                 <label htmlFor="msg-repeat-count" className="block text-xs font-medium mb-1">
-                  Repeat Amount (1–50)
+                  Repeat Amount
                 </label>
                 <input
                   id="msg-repeat-count"
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={repeatCount}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setRepeatCount(Number.isFinite(val) ? Math.min(50, Math.max(1, Math.floor(val))) : 1);
-                  }}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. 10"
+                  value={repeatCountInput}
+                  onChange={(e) => setRepeatCountInput(sanitizeRepeatAmountInput(e.target.value))}
                   className="w-full px-3 py-2 min-h-[44px] text-sm font-mono font-semibold rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
                 <div className="text-[10px] text-[#73798C] dark:text-slate-400 mt-1 font-mono">
-                  Total burst: {selectedChatIds.length * repeatCount} msg(s)
+                  Total burst: {selectedChatIds.length * activeRepeatCount} msg(s)
                 </div>
               </div>
             </div>
@@ -641,6 +641,10 @@ export function MessageCenterView({
                   onToast('error', 'Missing Chat ID', 'Enter or select a target Chat ID first.');
                   return;
                 }
+                if (!parsedRepeatCount) {
+                  onToast('error', 'Invalid Repeat Amount', 'Enter a repeat amount of 1 or higher.');
+                  return;
+                }
                 setConfirmOpen(true);
               }}
               className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors"
@@ -703,7 +707,7 @@ export function MessageCenterView({
             <span className="font-mono text-[#171A2B] dark:text-slate-200">
               {selectedChatIds.length > 0 ? selectedChatIds.join(', ') : 'Not selected'}
             </span>{' '}
-            · Repeat: <span className="font-mono font-semibold text-[#7565F6]">{repeatCount}x</span>
+            · Repeat: <span className="font-mono font-semibold text-[#7565F6]">{activeRepeatCount}x</span>
           </div>
         </div>
       </div>
@@ -771,7 +775,7 @@ export function MessageCenterView({
             </div>
             <div>
               <span className="text-[#73798C]">Repeat Amount:</span>{' '}
-              <span className="font-mono font-semibold">{repeatCount}x ({selectedChatIds.length * repeatCount} total dispatches)</span>
+              <span className="font-mono font-semibold">{activeRepeatCount}x ({selectedChatIds.length * activeRepeatCount} total dispatches)</span>
             </div>
             <div>
               <span className="text-[#73798C]">Type:</span> <span className="capitalize font-semibold">{messageType}</span>
@@ -792,7 +796,7 @@ export function MessageCenterView({
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#20C997] hover:bg-[#18b184] text-[#090B14] font-bold inline-flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{sending ? 'Sending...' : `Confirm & Send (${selectedChatIds.length * repeatCount})`}</span>
+              <span>{sending ? 'Sending...' : `Confirm & Send (${selectedChatIds.length * activeRepeatCount})`}</span>
             </button>
           </div>
         </div>

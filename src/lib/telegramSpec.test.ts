@@ -99,3 +99,20 @@ test('TELEGRAM_API_METHODS exposes profile photo management methods', async () =
   assert.equal(removePhoto?.category, 'bot_info');
 });
 
+test('sanitizeRepeatAmountInput allows clearing 1 and setting custom limits up to 1000', async () => {
+  const { sanitizeRepeatAmountInput, parseRepeatAmount, MAX_REPEAT_AMOUNT } = await import('./telegramSpec');
+  assert.equal(sanitizeRepeatAmountInput(''), '');
+  assert.equal(sanitizeRepeatAmountInput('abc'), '');
+  assert.equal(sanitizeRepeatAmountInput('0'), '0');
+  assert.equal(sanitizeRepeatAmountInput('75'), '75');
+  assert.equal(sanitizeRepeatAmountInput('250'), '250');
+  assert.equal(sanitizeRepeatAmountInput('5000'), String(MAX_REPEAT_AMOUNT));
+
+  assert.equal(parseRepeatAmount(''), null);
+  assert.equal(parseRepeatAmount('0'), null);
+  assert.equal(parseRepeatAmount('1'), 1);
+  assert.equal(parseRepeatAmount('75'), 75);
+  assert.equal(parseRepeatAmount('1000'), 1000);
+});
+
+
