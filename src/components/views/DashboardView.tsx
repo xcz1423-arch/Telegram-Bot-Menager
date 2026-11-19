@@ -132,7 +132,7 @@ export function DashboardView({
       <section className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 sm:p-5">
         <div className="min-w-0">
           <h2 className="text-lg sm:text-xl font-display font-bold tracking-tight">
-            Welcome back, {admin.displayName}
+            Welcome back, <span data-no-smallcaps="true">{admin.displayName}</span>
           </h2>
           <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 font-mono tabular-nums truncate">
             {nowLabel} · One Dashboard. Complete Bot Control.
@@ -281,13 +281,13 @@ export function DashboardView({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#A599FF] flex items-center justify-center font-display font-bold text-sm shrink-0">
+                    <div data-no-smallcaps="true" className="w-10 h-10 rounded-xl bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#A599FF] flex items-center justify-center font-display font-bold text-sm shrink-0">
                       {bot.name.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate">{bot.name}</div>
+                      <div data-no-smallcaps="true" className="text-sm font-semibold truncate">{bot.name}</div>
                       <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate">
-                        @{bot.username} · {bot.telegram_bot_id}
+                        <span data-no-smallcaps="true">@{bot.username}</span> · {bot.telegram_bot_id}
                       </div>
                     </div>
                   </div>
@@ -351,7 +351,7 @@ export function DashboardView({
                     <span className="font-mono font-medium text-[#6555E8] dark:text-[#988DF9]">
                       #{u.update_id} · {u.update_type}
                     </span>
-                    <span className="text-[11px] text-[#73798C] dark:text-slate-400 truncate">@{u.bot_username}</span>
+                    <span data-no-smallcaps="true" className="text-[11px] text-[#73798C] dark:text-slate-400 truncate">@{u.bot_username}</span>
                   </div>
                   <p className="text-xs text-[#171A2B] dark:text-slate-300 mt-0.5 truncate">{u.summary}</p>
                 </div>
@@ -413,7 +413,7 @@ export function DashboardView({
                   <div className="min-w-0">
                     <div className="font-mono font-medium truncate">{a.method}</div>
                     <div className="text-[11px] text-[#73798C] dark:text-slate-400 truncate">
-                      {a.bot_username ? `@${a.bot_username}` : 'System'} · {a.duration_ms}ms
+                      {a.bot_username ? <span data-no-smallcaps="true">@{a.bot_username}</span> : 'System'} · {a.duration_ms}ms
                     </div>
                   </div>
                   <StatusBadge

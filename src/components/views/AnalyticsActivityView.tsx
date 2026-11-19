@@ -74,7 +74,7 @@ export function AnalyticsView({
           >
             <option value="">All Bots</option>
             {bots.map((b) => (
-              <option key={b.id} value={b.id}>
+              <option key={b.id} value={b.id} data-no-smallcaps="true">
                 @{b.username}
               </option>
             ))}
@@ -146,6 +146,7 @@ export function AnalyticsView({
               sublabel: `@${b.username}`,
               value: b.api_requests,
               color: '#7565F6',
+              noSmallCaps: true,
             }))}
           />
         </div>
@@ -239,8 +240,8 @@ export function ActivityLogsView() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-mono font-semibold text-[#171A2B] dark:text-slate-100">{r.action}</span>
-                {r.bot_name && <span className="text-[#6555E8] dark:text-[#988DF9] font-medium">{r.bot_name}</span>}
-                {r.related_resource && <span className="font-mono text-[#73798C]">{r.related_resource}</span>}
+                {r.bot_name && <span data-no-smallcaps="true" className="text-[#6555E8] dark:text-[#988DF9] font-medium">{r.bot_name}</span>}
+                {r.related_resource && <span data-no-smallcaps="true" className="font-mono text-[#73798C]">{r.related_resource}</span>}
               </div>
               {r.details && <p className="text-[#73798C] dark:text-slate-400 mt-0.5 truncate">{r.details}</p>}
             </div>

@@ -287,7 +287,7 @@ export function MessageCenterView({
                 className="w-full px-3 py-2 min-h-[44px] text-xs font-medium rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
               >
                 {bots.map((b) => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id} data-no-smallcaps="true">
                     {b.name} (@{b.username})
                   </option>
                 ))}
@@ -352,7 +352,7 @@ export function MessageCenterView({
                             : 'bg-[#F6F7FB] dark:bg-[#101421] text-[#73798C] dark:text-slate-300 border-[#E8EAF1] dark:border-slate-800 hover:border-[#7565F6]/50'
                         }`}
                       >
-                        {label}
+                        <span data-no-smallcaps="true">{label}</span>
                       </button>
                     );
                   })}
@@ -662,7 +662,7 @@ export function MessageCenterView({
             <div className="rounded-2xl bg-[#0F172A] p-4 border border-slate-800 min-h-[260px] flex flex-col justify-end">
               <div className="max-w-[90%] space-y-1.5">
                 <div className="rounded-2xl rounded-bl-sm bg-[#1E293B] text-slate-100 p-3.5 text-sm shadow-sm">
-                  <div className="text-[11px] font-semibold text-[#22C8F6] mb-1">
+                  <div data-no-smallcaps="true" className="text-[11px] font-semibold text-[#22C8F6] mb-1">
                     {bot.name} (@{bot.username})
                   </div>
                   {mediaUrl && (
@@ -763,7 +763,7 @@ export function MessageCenterView({
         <div className="space-y-4 text-xs">
           <div className="p-3 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 space-y-1.5">
             <div>
-              <span className="text-[#73798C]">Bot:</span> <span className="font-mono font-semibold">@{bot.username}</span>
+              <span className="text-[#73798C]">Bot:</span> <span data-no-smallcaps="true" className="font-mono font-semibold">@{bot.username}</span>
             </div>
             <div>
               <span className="text-[#73798C]">Target Chats ({selectedChatIds.length}):</span>{' '}

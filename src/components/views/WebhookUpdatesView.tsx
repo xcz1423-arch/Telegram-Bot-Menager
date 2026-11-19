@@ -284,7 +284,7 @@ export function WebhookUpdatesView({
               className="px-3 py-2 min-h-[40px] text-xs font-medium rounded-xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800"
             >
               {bots.map((b) => (
-                <option key={b.id} value={b.id}>
+                <option key={b.id} value={b.id} data-no-smallcaps="true">
                   @{b.username}
                 </option>
               ))}

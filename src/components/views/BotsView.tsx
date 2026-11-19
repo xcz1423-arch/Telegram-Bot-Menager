@@ -232,7 +232,7 @@ export function AddBotModal({
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
                 <span className="text-[#73798C] dark:text-slate-400">Username:</span>{' '}
-                <span className="font-mono font-medium">@{preview.profile.username}</span>
+                <span data-no-smallcaps="true" className="font-mono font-medium">@{preview.profile.username}</span>
               </div>
               <div>
                 <span className="text-[#73798C] dark:text-slate-400">Bot ID:</span>{' '}
@@ -550,9 +550,9 @@ export function BotsView({
                   <div className="flex items-center gap-3 min-w-0">
                     <BotAvatarBadge bot={b} size="sm" />
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate">{b.name}</div>
+                      <div data-no-smallcaps="true" className="text-sm font-semibold truncate">{b.name}</div>
                       <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate">
-                        @{b.username} · {b.mode}
+                        <span data-no-smallcaps="true">@{b.username}</span> · {b.mode}
                       </div>
                     </div>
                   </div>
@@ -582,14 +582,14 @@ export function BotsView({
               <BotAvatarBadge bot={selectedBot} size="md" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  <h2 className="text-lg font-display font-bold truncate">{selectedBot.name}</h2>
+                  <h2 data-no-smallcaps="true" className="text-lg font-display font-bold truncate">{selectedBot.name}</h2>
                   <StatusBadge
                     status={selectedBot.connection_status === 'connected' ? 'success' : 'warning'}
                     label={selectedBot.connection_status}
                   />
                 </div>
                 <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-1 truncate">
-                  @{selectedBot.username} · ID {selectedBot.telegram_bot_id} · Token {selectedBot.token_masked}
+                  <span data-no-smallcaps="true">@{selectedBot.username}</span> · ID {selectedBot.telegram_bot_id} · Token {selectedBot.token_masked}
                 </div>
               </div>
             </div>
@@ -672,7 +672,7 @@ export function BotsView({
 
               <div>
                 <h3 className="text-xs font-semibold text-[#73798C] dark:text-slate-400 mb-2.5">
-                  Operate @{selectedBot.username}
+                  Operate <span data-no-smallcaps="true">@{selectedBot.username}</span>
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   {[

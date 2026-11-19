@@ -329,11 +329,11 @@ export function AppShell({
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold truncate flex items-center gap-1">
-                    <span className="truncate">{admin.displayName}</span>
+                    <span data-no-smallcaps="true" className="truncate">{admin.displayName}</span>
                     <VerifiedBadgeIcon badge={admin.badge} size="xs" />
                   </div>
                   <div className="text-[10px] font-mono text-[#73798C] dark:text-slate-400 truncate">
-                    @{admin.username} · {admin.role}
+                    <span data-no-smallcaps="true">@{admin.username}</span> · {admin.role}
                   </div>
                 </div>
               </button>
@@ -409,7 +409,7 @@ export function AppShell({
               >
                 <option value="">All Bots ({bots.length})</option>
                 {bots.map((b) => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id} data-no-smallcaps="true">
                     @{b.username}
                   </option>
                 ))}
@@ -511,7 +511,7 @@ export function AppShell({
                               </div>
                               <p className="text-[#73798C] dark:text-slate-300 mt-0.5 leading-relaxed break-words">{n.message}</p>
                               <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[#73798C] dark:text-slate-500">
-                                {n.sender_name && <span>By {n.sender_name}</span>}
+                                {n.sender_name && <span>By <span data-no-smallcaps="true">{n.sender_name}</span></span>}
                                 {n.sender_ip && (
                                   <span className="inline-flex items-center gap-0.5 text-[#22C8F6]">
                                     <Globe className="w-2.5 h-2.5" />
@@ -548,7 +548,7 @@ export function AppShell({
                   badge={admin.badge}
                   size="sm"
                 />
-                <span className="text-xs font-medium max-w-[110px] truncate">{admin.displayName}</span>
+                <span data-no-smallcaps="true" className="text-xs font-medium max-w-[110px] truncate">{admin.displayName}</span>
                 <VerifiedBadgeIcon badge={admin.badge} size="xs" />
               </button>
 
@@ -564,11 +564,11 @@ export function AppShell({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-semibold truncate flex items-center gap-1">
-                        <span className="truncate">{admin.displayName}</span>
+                        <span data-no-smallcaps="true" className="truncate">{admin.displayName}</span>
                         <VerifiedBadgeIcon badge={admin.badge} size="xs" />
                       </div>
                       <div className="text-[11px] font-mono text-[#73798C] dark:text-slate-400 truncate">
-                        @{admin.username} · {admin.role === 'admin' ? 'Admin' : 'User'}
+                        <span data-no-smallcaps="true">@{admin.username}</span> · {admin.role === 'admin' ? 'Admin' : 'User'}
                       </div>
                     </div>
                   </div>
@@ -604,9 +604,9 @@ export function AppShell({
         {activeBot && (
           <div className="px-3 sm:px-6 py-2 bg-[#6555E8]/6 dark:bg-[#7565F6]/8 border-b border-[#E8EAF1] dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-semibold text-[#171A2B] dark:text-slate-100 truncate">{activeBot.name}</span>
+              <span data-no-smallcaps="true" className="font-semibold text-[#171A2B] dark:text-slate-100 truncate">{activeBot.name}</span>
               <span aria-hidden="true" className="text-[#73798C]">·</span>
-              <span className="font-mono text-[#6555E8] dark:text-[#A599FF]">@{activeBot.username}</span>
+              <span data-no-smallcaps="true" className="font-mono text-[#6555E8] dark:text-[#A599FF]">@{activeBot.username}</span>
               <span aria-hidden="true" className="text-[#73798C] hidden sm:inline">·</span>
               <span className="font-mono text-[#73798C] dark:text-slate-400 hidden sm:inline">
                 ID {activeBot.telegram_bot_id}
@@ -716,8 +716,8 @@ export function AppShell({
                     }}
                     className="w-full flex items-center justify-between px-3 py-2.5 min-h-[44px] rounded-xl text-xs hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
-                    <span className="font-medium">{b.name}</span>
-                    <span className="font-mono text-[#73798C] dark:text-slate-400">@{b.username}</span>
+                    <span data-no-smallcaps="true" className="font-medium">{b.name}</span>
+                    <span data-no-smallcaps="true" className="font-mono text-[#73798C] dark:text-slate-400">@{b.username}</span>
                   </button>
                 ))}
               </div>

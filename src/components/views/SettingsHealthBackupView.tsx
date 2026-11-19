@@ -383,10 +383,10 @@ export function SettingsHealthBackupView({
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-display font-bold text-base truncate">{profileName || admin.displayName}</span>
+                  <span data-no-smallcaps="true" className="font-display font-bold text-base truncate">{profileName || admin.displayName}</span>
                   <VerifiedBadgeIcon badge={profileBadge} showLabel size="sm" />
                 </div>
-                <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-0.5">
+                <div data-no-smallcaps="true" className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-0.5">
                   @{admin.username}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -534,7 +534,7 @@ export function SettingsHealthBackupView({
                   {users
                     .filter((u) => u.id !== admin.id)
                     .map((u) => (
-                      <option key={u.id} value={String(u.id)}>
+                      <option key={u.id} value={String(u.id)} data-no-smallcaps="true">
                         {u.displayName} (@{u.username})
                       </option>
                     ))}
@@ -637,9 +637,9 @@ export function SettingsHealthBackupView({
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-semibold truncate">{u.displayName}</span>
+                          <span data-no-smallcaps="true" className="text-xs font-semibold truncate">{u.displayName}</span>
                           <VerifiedBadgeIcon badge={u.badge} size="xs" />
-                          <span className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">@{u.username}</span>
+                          <span data-no-smallcaps="true" className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">@{u.username}</span>
                           {isSelf && <StatusBadge status="accent" label="You" />}
                         </div>
                         <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px]">
@@ -741,14 +741,14 @@ export function SettingsHealthBackupView({
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-[#171A2B] dark:text-slate-100">
+                            <span data-no-smallcaps="true" className="font-semibold text-[#171A2B] dark:text-slate-100">
                               {entry.admin_display_name}
                             </span>
                             <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${badgeInfo.cls}`}>
                               {badgeInfo.label}
                             </span>
                             {entry.affected_username && (
-                              <span className="font-mono text-[11px] text-[#73798C] dark:text-slate-400">
+                              <span data-no-smallcaps="true" className="font-mono text-[11px] text-[#73798C] dark:text-slate-400">
                                 → {entry.affected_display_name || entry.affected_username} (@{entry.affected_username})
                               </span>
                             )}

@@ -85,7 +85,7 @@ export function DebugConsoleView({
           >
             <option value="">All Bots</option>
             {bots.map((b) => (
-              <option key={b.id} value={b.id}>
+              <option key={b.id} value={b.id} data-no-smallcaps="true">
                 @{b.username}
               </option>
             ))}
@@ -120,7 +120,7 @@ export function DebugConsoleView({
                         {entry.title}
                       </span>
                       <span className="text-[#73798C] dark:text-slate-400">
-                        {entry.bot_username ? `@${entry.bot_username}` : 'System'} · {entry.source.toUpperCase()}
+                        {entry.bot_username ? <span data-no-smallcaps="true">@{entry.bot_username}</span> : 'System'} · {entry.source.toUpperCase()}
                       </span>
                       {entry.duration_ms > 0 && (
                         <span className="font-mono tabular-nums text-[#73798C] dark:text-slate-400">

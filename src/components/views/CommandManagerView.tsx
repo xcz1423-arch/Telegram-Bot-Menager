@@ -112,7 +112,7 @@ export function CommandManagerView({
               className="w-full px-3 py-2 min-h-[44px] text-xs font-medium rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
             >
               {bots.map((b) => (
-                <option key={b.id} value={b.id}>
+                <option key={b.id} value={b.id} data-no-smallcaps="true">
                   @{b.username}
                 </option>
               ))}

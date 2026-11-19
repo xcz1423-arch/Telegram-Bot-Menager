@@ -87,7 +87,7 @@ export function ChatManagerView({
               className="px-3 py-2 min-h-[44px] text-xs font-medium rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
             >
               {bots.map((b) => (
-                <option key={b.id} value={b.id}>
+                <option key={b.id} value={b.id} data-no-smallcaps="true">
                   @{b.username}
                 </option>
               ))}
@@ -158,9 +158,9 @@ export function ChatManagerView({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">{label}</div>
+                    <div data-no-smallcaps="true" className="text-sm font-semibold truncate">{label}</div>
                     <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate mt-0.5">
-                      ID: {c.chat_id} {c.username ? `· @${c.username}` : ''}
+                      ID: {c.chat_id} {c.username ? <span data-no-smallcaps="true">· @{c.username}</span> : ''}
                     </div>
                   </div>
                   <StatusBadge status="accent" label={c.chat_type} />

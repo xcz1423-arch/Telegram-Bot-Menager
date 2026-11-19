@@ -307,7 +307,7 @@ export function ApiExplorerView({
               className="px-2.5 py-1.5 min-h-[36px] text-xs font-mono rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
             >
               {bots.map((b) => (
-                <option key={b.id} value={b.id}>
+                <option key={b.id} value={b.id} data-no-smallcaps="true">
                   @{b.username}
                 </option>
               ))}
