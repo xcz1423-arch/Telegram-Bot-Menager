@@ -16,10 +16,76 @@ import { DebugConsoleView } from './components/views/DebugConsoleView';
 import { AnalyticsView, ActivityLogsView } from './components/views/AnalyticsActivityView';
 import { SettingsHealthBackupView } from './components/views/SettingsHealthBackupView';
 import { ToastContainer } from './components/ui/Primitives';
+import { toSmallCaps } from './lib/smallCaps';
+
+const SKIP_SMALL_CAPS_TAGS = new Set(['INPUT', 'TEXTAREA', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'NOSCRIPT']);
+
+function useGlobalSmallCaps() {
+  useEffect(() => {
+    const root = document.getElementById('root');
+    if (!root) return;
+
+    const shouldSkipNode = (node: Node): boolean => {
+      let el = node.parentElement;
+      while (el) {
+        if (SKIP_SMALL_CAPS_TAGS.has(el.tagName)) return true;
+        if (el.isContentEditable || el.getAttribute('data-no-smallcaps') === 'true') return true;
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const applyToTree = (target: Node) => {
+      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+      let current: Node | null = walker.nextNode();
+      while (current) {
+        if (!shouldSkipNode(current)) {
+          const raw = current.nodeValue;
+          if (raw && /[A-Za-z]/.test(raw)) {
+            const converted = toSmallCaps(raw);
+            if (converted !== raw) {
+              current.nodeValue = converted;
+            }
+          }
+        }
+        current = walker.nextNode();
+      }
+    };
+
+    applyToTree(root);
+
+    let rafId = 0;
+    const observer = new MutationObserver(() => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        applyToTree(root);
+        if (document.title && /[A-Za-z]/.test(document.title)) {
+          const nextTitle = toSmallCaps(document.title);
+          if (nextTitle !== document.title) {
+            document.title = nextTitle;
+          }
+        }
+      });
+    });
+
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    return () => {
+      observer.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
+}
 
 export default function App() {
+  useGlobalSmallCaps();
   const [booting, setBooting] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [admin, setAdmin] = useState<AdminUser | null>(null);
 
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -105,6 +171,7 @@ export default function App() {
         const status = await apiFetch<{
           setupRequired: boolean;
           authenticated: boolean;
+          blocked?: boolean;
           csrfToken?: string;
           admin?: AdminUser;
         }>('/api/auth/status');
@@ -113,6 +180,7 @@ export default function App() {
           if (status.csrfToken) setCsrfToken(status.csrfToken);
           setAdmin(status.admin);
           setSetupRequired(false);
+          setBlockedMessage(null);
         } else if (autostart) {
           const autoRes = await apiFetch<{ csrfToken: string; admin: AdminUser }>('/api/auth/autostart', {
             method: 'POST',
@@ -120,9 +188,13 @@ export default function App() {
           setCsrfToken(autoRes.csrfToken);
           setAdmin(autoRes.admin);
           setSetupRequired(false);
+          setBlockedMessage(null);
         } else {
           setSetupRequired(status.setupRequired);
           setAdmin(null);
+          if (status.blocked) {
+            setBlockedMessage('Your account has been blocked by the administrator.');
+          }
         }
       } finally {
         setBooting(false);
@@ -167,11 +239,13 @@ export default function App() {
     return (
       <AuthGate
         setupRequired={setupRequired}
+        blockedMessage={blockedMessage}
         theme={theme}
         onToggleTheme={cycleTheme}
         onAuthenticated={(user) => {
           setAdmin(user);
           setSetupRequired(false);
+          setBlockedMessage(null);
         }}
       />
     );
@@ -307,6 +381,8 @@ export default function App() {
 
         {activeTab === 'settings' && (
           <SettingsHealthBackupView
+            admin={admin}
+            onAdminUpdated={setAdmin}
             theme={theme}
             onSetTheme={setTheme}
             appName={appName}

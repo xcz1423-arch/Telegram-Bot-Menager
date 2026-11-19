@@ -78,9 +78,29 @@ export function MessageCenterView({
 
   const [disableNotification, setDisableNotification] = useState(false);
   const [protectContent, setProtectContent] = useState(false);
+  const [repeatCount, setRepeatCount] = useState<number>(1);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [expandedMsgId, setExpandedMsgId] = useState<number | null>(null);
+
+  const parseTargetChatIds = (raw: string): string[] =>
+    Array.from(
+      new Set(
+        raw
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      )
+    );
+
+  const selectedChatIds = parseTargetChatIds(chatId);
+
+  const toggleKnownChat = (targetId: string) => {
+    const current = parseTargetChatIds(chatId);
+    const exists = current.includes(targetId);
+    const next = exists ? current.filter((c) => c !== targetId) : [...current, targetId];
+    setChatId(next.join(', '));
+  };
 
   useEffect(() => {
     if (initialChatId) setChatId(initialChatId);
@@ -184,7 +204,8 @@ export function MessageCenterView({
 
       const body: Record<string, unknown> = {
         messageType,
-        chatId,
+        chatIds: selectedChatIds,
+        repeatCount: Math.min(50, Math.max(1, Math.floor(Number(repeatCount) || 1))),
         parseMode,
         text,
         mediaUrl,
@@ -205,11 +226,18 @@ export function MessageCenterView({
         replyMarkup,
       };
 
-      const res = await apiFetch<{ ok: boolean; durationMs: number }>(`/api/bots/${bot.id}/messages`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      onToast('success', 'Message Dispatched', `Delivered to ${chatId} in ${res.durationMs}ms.`);
+      const res = await apiFetch<{ ok: boolean; sentCount: number; failedCount: number; totalCount: number; durationMs: number }>(
+        `/api/bots/${bot.id}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }
+      );
+      onToast(
+        'success',
+        'Messages Dispatched',
+        `Delivered ${res.sentCount}/${res.totalCount} message(s) across ${selectedChatIds.length} chat(s) in ${res.durationMs}ms.`
+      );
       setConfirmOpen(false);
       await loadBotData();
       onRefreshDashboard();
@@ -285,40 +313,88 @@ export function MessageCenterView({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="msg-known-chat" className="block text-xs font-medium mb-1">
-                Known Chat Directory
-              </label>
-              <select
-                id="msg-known-chat"
-                value={chats.some((c) => c.chat_id === chatId) ? chatId : ''}
-                onChange={(e) => {
-                  if (e.target.value) setChatId(e.target.value);
-                }}
-                className="w-full px-3 py-2 min-h-[44px] text-xs rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
-              >
-                <option value="">-- Select known chat or type ID --</option>
-                {chats.map((c) => (
-                  <option key={c.id} value={c.chat_id}>
-                    {c.title || c.first_name || c.username || c.chat_id} ({c.chat_type})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="space-y-3">
+            {chats.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-xs font-medium">Select Multiple Recipients ({selectedChatIds.length} active)</span>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setChatId(chats.map((c) => c.chat_id).join(', '))}
+                      className="text-[#6555E8] dark:text-[#A599FF] hover:underline font-medium"
+                    >
+                      Select All
+                    </button>
+                    {selectedChatIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setChatId('')}
+                        className="text-[#73798C] hover:text-[#F05B75]"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {chats.map((c) => {
+                    const active = selectedChatIds.includes(c.chat_id);
+                    const label = c.title || c.first_name || (c.username ? `@${c.username}` : c.chat_id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => toggleKnownChat(c.chat_id)}
+                        className={`px-2.5 py-1.5 min-h-[32px] rounded-xl text-[11px] font-medium border transition-colors ${
+                          active
+                            ? 'bg-[#6555E8] dark:bg-[#7565F6] text-white border-transparent'
+                            : 'bg-[#F6F7FB] dark:bg-[#101421] text-[#73798C] dark:text-slate-300 border-[#E8EAF1] dark:border-slate-800 hover:border-[#7565F6]/50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-            <div>
-              <label htmlFor="msg-chat-id" className="block text-xs font-medium mb-1">
-                Target Chat ID or @username
-              </label>
-              <input
-                id="msg-chat-id"
-                type="text"
-                value={chatId}
-                onChange={(e) => setChatId(e.target.value)}
-                placeholder="104829104 or @channel"
-                className="w-full px-3 py-2 min-h-[44px] text-xs font-mono rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-8">
+                <label htmlFor="msg-chat-id" className="block text-xs font-medium mb-1">
+                  Target Chat IDs or @usernames (comma or newline separated)
+                </label>
+                <textarea
+                  id="msg-chat-id"
+                  rows={2}
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                  placeholder="104829104, -100199911, @channel"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                />
+              </div>
+
+              <div className="sm:col-span-4">
+                <label htmlFor="msg-repeat-count" className="block text-xs font-medium mb-1">
+                  Repeat Amount (1–50)
+                </label>
+                <input
+                  id="msg-repeat-count"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={repeatCount}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setRepeatCount(Number.isFinite(val) ? Math.min(50, Math.max(1, Math.floor(val))) : 1);
+                  }}
+                  className="w-full px-3 py-2 min-h-[44px] text-sm font-mono font-semibold rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                />
+                <div className="text-[10px] text-[#73798C] dark:text-slate-400 mt-1 font-mono">
+                  Total burst: {selectedChatIds.length * repeatCount} msg(s)
+                </div>
+              </div>
             </div>
           </div>
 
@@ -623,7 +699,11 @@ export function MessageCenterView({
           </div>
 
           <div className="mt-4 text-[11px] text-[#73798C] dark:text-slate-400">
-            Target Chat: <span className="font-mono text-[#171A2B] dark:text-slate-200">{chatId || 'Not selected'}</span>
+            Targets ({selectedChatIds.length}):{' '}
+            <span className="font-mono text-[#171A2B] dark:text-slate-200">
+              {selectedChatIds.length > 0 ? selectedChatIds.join(', ') : 'Not selected'}
+            </span>{' '}
+            · Repeat: <span className="font-mono font-semibold text-[#7565F6]">{repeatCount}x</span>
           </div>
         </div>
       </div>
@@ -686,7 +766,12 @@ export function MessageCenterView({
               <span className="text-[#73798C]">Bot:</span> <span className="font-mono font-semibold">@{bot.username}</span>
             </div>
             <div>
-              <span className="text-[#73798C]">Target Chat:</span> <span className="font-mono font-semibold">{chatId}</span>
+              <span className="text-[#73798C]">Target Chats ({selectedChatIds.length}):</span>{' '}
+              <span className="font-mono font-semibold break-all">{selectedChatIds.join(', ')}</span>
+            </div>
+            <div>
+              <span className="text-[#73798C]">Repeat Amount:</span>{' '}
+              <span className="font-mono font-semibold">{repeatCount}x ({selectedChatIds.length * repeatCount} total dispatches)</span>
             </div>
             <div>
               <span className="text-[#73798C]">Type:</span> <span className="capitalize font-semibold">{messageType}</span>
@@ -707,7 +792,7 @@ export function MessageCenterView({
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#20C997] hover:bg-[#18b184] text-[#090B14] font-bold inline-flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{sending ? 'Sending...' : 'Confirm & Send'}</span>
+              <span>{sending ? 'Sending...' : `Confirm & Send (${selectedChatIds.length * repeatCount})`}</span>
             </button>
           </div>
         </div>

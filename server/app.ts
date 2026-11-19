@@ -32,7 +32,7 @@ export function createApp() {
   const app = express();
   app.set('trust proxy', 1);
   app.use(securityHeaders);
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '4mb' }));
 
   app.use('/api', async (req, res, next) => {
     try {
@@ -40,7 +40,15 @@ export function createApp() {
 
       // Synchronize SQLite state across ephemeral Vercel Lambda containers
       if ((isServerlessRuntime() || process.env.XC_FORCE_SQLJS === '1') && isSqlJsActive() && !req.path.startsWith('/webhook/')) {
-        const incomingVault = typeof req.headers['x-xc-vault'] === 'string' ? req.headers['x-xc-vault'] : '';
+        const bodyVault =
+          req.body && typeof req.body === 'object' && !Array.isArray(req.body) && typeof (req.body as Record<string, unknown>)._vault === 'string'
+            ? String((req.body as Record<string, unknown>)._vault)
+            : '';
+        if (bodyVault && req.body && typeof req.body === 'object') {
+          delete (req.body as Record<string, unknown>)._vault;
+        }
+        const headerVault = typeof req.headers['x-xc-vault'] === 'string' ? req.headers['x-xc-vault'] : '';
+        const incomingVault = bodyVault || headerVault;
         const incomingRev = typeof req.headers['x-xc-vault-rev'] === 'string' ? req.headers['x-xc-vault-rev'] : '';
 
         if (incomingVault) {
@@ -60,6 +68,11 @@ export function createApp() {
           return;
         }
 
+        if (req.path === '/vault/sync' && req.method.toUpperCase() === 'POST') {
+          res.json({ ok: true, rev: getVaultRev() });
+          return;
+        }
+
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
         if (isMutating) {
           const origJson = res.json.bind(res);
@@ -69,7 +82,8 @@ export function createApp() {
               body &&
               typeof body === 'object' &&
               !Array.isArray(body) &&
-              req.path !== '/auth/logout'
+              req.path !== '/auth/logout' &&
+              req.path !== '/vault/sync'
             ) {
               const nextRev = bumpVaultRev();
               const raw = exportDatabaseBytes();

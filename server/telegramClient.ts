@@ -428,7 +428,7 @@ export async function executeDirectWebhookMethod(params: {
         result = { ok: true, httpStatus: 200, durationMs, result: true, rawResponse: { ok: true, result: true } };
       }
     } else if (method === 'deleteWebhook') {
-      db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
+      db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(key);
       result = { ok: true, httpStatus: 200, durationMs, result: true, rawResponse: { ok: true, result: true } };
     } else {
       const rawStored = getSetting(key, '');
@@ -546,7 +546,7 @@ function executeSandboxMethod(
       return succeed(true);
 
     case 'removeMyProfilePhoto':
-      db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
+      db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
       return succeed(true);
 
     case 'sendMessage':

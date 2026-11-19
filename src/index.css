@@ -8,9 +8,14 @@
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   }
 
-  html {
+  html,
+  body {
     font-family: var(--font-sans);
     -webkit-tap-highlight-color: transparent;
+    touch-action: pan-x pan-y;
+    -ms-touch-action: pan-x pan-y;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: contain;
   }
 
   h1, h2, h3, h4, .font-display {

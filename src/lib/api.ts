@@ -62,12 +62,39 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
   if (stored.rev) {
     headers.set('X-XC-Vault-Rev', stored.rev);
   }
+
+  let requestOptions = { ...options };
   if (includeVaultPayload && stored.vault) {
-    headers.set('X-XC-Vault', stored.vault);
+    const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+    if (isMutating) {
+      let bodyObj: Record<string, unknown> = {};
+      if (typeof options.body === 'string' && options.body.trim()) {
+        try {
+          bodyObj = JSON.parse(options.body) as Record<string, unknown>;
+        } catch {
+          bodyObj = {};
+        }
+      }
+      bodyObj._vault = stored.vault;
+      requestOptions = { ...options, body: JSON.stringify(bodyObj) };
+      headers.set('Content-Type', 'application/json');
+    } else if (stored.vault.length <= 6000) {
+      headers.set('X-XC-Vault', stored.vault);
+    } else {
+      await fetch('/api/vault/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(stored.rev ? { 'X-XC-Vault-Rev': stored.rev } : {}),
+        },
+        body: JSON.stringify({ _vault: stored.vault }),
+        credentials: 'include',
+      });
+    }
   }
 
   const res = await fetch(url, {
-    ...options,
+    ...requestOptions,
     headers,
     credentials: 'include',
   });

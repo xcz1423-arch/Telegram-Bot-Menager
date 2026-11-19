@@ -11,6 +11,11 @@ export interface AuthenticatedSession {
   userId: number;
   username: string;
   displayName: string;
+  role: 'admin' | 'user';
+  avatarUrl: string | null;
+  badge: string;
+  isBlocked: boolean;
+  createdIp: string | null;
   csrfToken: string;
   rememberMe: boolean;
 }
@@ -166,12 +171,17 @@ export interface ResolvedSession {
   userId: number;
   username: string;
   displayName: string;
+  role: 'admin' | 'user';
+  avatarUrl: string | null;
+  badge: string;
+  isBlocked: boolean;
+  createdIp: string | null;
   csrfToken: string;
   rememberMe: boolean;
   lastLoginAt: string | null;
 }
 
-export function resolveSessionFromRequest(req: Request): { session: ResolvedSession | null; hadCookie: boolean } {
+export function resolveSessionFromRequest(req: Request): { session: ResolvedSession | null; hadCookie: boolean; blocked?: boolean } {
   const cookies = parseCookies(req.headers.cookie);
   const rawToken = cookies[SESSION_COOKIE_NAME];
   if (!rawToken) {
@@ -182,7 +192,7 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
   const row = db
     .prepare(`
       SELECT s.id as session_id, s.csrf_token, s.user_id, s.remember_me, s.expires_at,
-             u.username, u.display_name, u.last_login_at
+             u.username, u.display_name, u.role, u.avatar_url, u.badge, u.is_blocked, u.created_ip, u.last_login_at
       FROM admin_sessions s
       JOIN admin_users u ON u.id = s.user_id
       WHERE s.session_token_hash = ?
@@ -196,11 +206,20 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
         expires_at: string;
         username: string;
         display_name: string;
+        role: string;
+        avatar_url: string | null;
+        badge: string;
+        is_blocked: number;
+        created_ip: string | null;
         last_login_at: string | null;
       }
     | undefined;
 
   if (row) {
+    if (Boolean(row.is_blocked)) {
+      db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(row.user_id);
+      return { session: null, hadCookie: true, blocked: true };
+    }
     if (new Date(row.expires_at).getTime() <= Date.now()) {
       db.prepare('DELETE FROM admin_sessions WHERE id = ?').run(row.session_id);
       return { session: null, hadCookie: true };
@@ -213,6 +232,11 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
         userId: row.user_id,
         username: row.username,
         displayName: row.display_name,
+        role: row.role === 'admin' ? 'admin' : 'user',
+        avatarUrl: row.avatar_url || null,
+        badge: row.badge || 'none',
+        isBlocked: false,
+        createdIp: row.created_ip || null,
         csrfToken: row.csrf_token,
         rememberMe: Boolean(row.remember_me),
         lastLoginAt: row.last_login_at,
@@ -228,10 +252,30 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
   }
 
   const dbUser = db
-    .prepare('SELECT id, username, display_name, last_login_at FROM admin_users WHERE username = ?')
-    .get(verified.u) as
-    | { id: number; username: string; display_name: string; last_login_at: string | null }
+    .prepare('SELECT id, username, display_name, role, avatar_url, badge, is_blocked, created_ip, last_login_at FROM admin_users WHERE id = ? OR LOWER(username) = LOWER(?)')
+    .get(verified.uid, verified.u) as
+    | {
+        id: number;
+        username: string;
+        display_name: string;
+        role: string;
+        avatar_url: string | null;
+        badge: string;
+        is_blocked: number;
+        created_ip: string | null;
+        last_login_at: string | null;
+      }
     | undefined;
+
+  if (dbUser && Boolean(dbUser.is_blocked)) {
+    return { session: null, hadCookie: true, blocked: true };
+  }
+
+  // If users exist in DB and this stateless user was deleted, reject
+  const userCount = (db.prepare('SELECT COUNT(*) as cnt FROM admin_users').get() as { cnt: number }).cnt;
+  if (userCount > 0 && !dbUser) {
+    return { session: null, hadCookie: true };
+  }
 
   return {
     hadCookie: true,
@@ -240,6 +284,11 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
       userId: dbUser?.id ?? verified.uid,
       username: dbUser?.username ?? verified.u,
       displayName: dbUser?.display_name ?? verified.dn,
+      role: dbUser?.role === 'admin' ? 'admin' : 'user',
+      avatarUrl: dbUser?.avatar_url || null,
+      badge: dbUser?.badge || 'none',
+      isBlocked: false,
+      createdIp: dbUser?.created_ip || null,
       csrfToken: verified.csrf,
       rememberMe: verified.rm,
       lastLoginAt: dbUser?.last_login_at ?? null,
@@ -248,10 +297,14 @@ export function resolveSessionFromRequest(req: Request): { session: ResolvedSess
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const { session, hadCookie } = resolveSessionFromRequest(req);
+  const { session, hadCookie, blocked } = resolveSessionFromRequest(req);
   if (!session) {
     if (hadCookie) {
       clearSessionCookie(res);
+      if (blocked) {
+        res.status(403).json({ error: 'Your account has been blocked by the administrator.' });
+        return;
+      }
       res.status(401).json({ error: 'Session expired. Please sign in again.' });
       return;
     }
@@ -274,8 +327,21 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     userId: session.userId,
     username: session.username,
     displayName: session.displayName,
+    role: session.role,
+    avatarUrl: session.avatarUrl,
+    badge: session.badge,
+    isBlocked: session.isBlocked,
+    createdIp: session.createdIp,
     csrfToken: session.csrfToken,
     rememberMe: session.rememberMe,
   };
+  next();
+}
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.auth || req.auth.role !== 'admin') {
+    res.status(403).json({ error: 'Administrator privileges are required for this action.' });
+    return;
+  }
   next();
 }

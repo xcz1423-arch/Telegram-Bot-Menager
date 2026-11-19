@@ -15,11 +15,44 @@ export type NavTab =
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 
+export type BadgeId = 'none' | 'verified_blue' | 'vip_gold' | 'dev_pro' | 'shield_ops' | 'creator';
+
 export interface AdminUser {
   id: number;
   username: string;
   displayName: string;
+  role: 'admin' | 'user';
+  avatarUrl?: string | null;
+  badge?: BadgeId | string;
+  createdIp?: string | null;
   lastLoginAt?: string | null;
+}
+
+export interface UserAccountSummary {
+  id: number;
+  username: string;
+  displayName: string;
+  role: 'admin' | 'user';
+  avatarUrl: string | null;
+  badge: BadgeId | string;
+  isBlocked: boolean;
+  createdIp: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminAuditEntry {
+  id: number;
+  admin_user_id: number;
+  admin_username: string;
+  admin_display_name: string;
+  admin_avatar: string | null;
+  action_type: 'ACCOUNT_DELETED' | 'USER_BLOCKED' | 'USER_UNBLOCKED' | 'ADMIN_PROMOTED' | 'ADMIN_DEMOTED' | 'NOTIFICATION_SENT' | string;
+  affected_user_id: number | null;
+  affected_username: string | null;
+  affected_display_name: string | null;
+  details: string;
+  created_at: string;
 }
 
 export interface BotSummary {
@@ -121,9 +154,16 @@ export interface KeyboardTemplate {
 export interface NotificationItem {
   id: number;
   bot_id: number | null;
+  target_user_id?: number | null;
+  recipient_role?: string;
+  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change' | string;
   severity: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
+  sender_badge?: string | null;
+  sender_ip?: string | null;
   is_read: number;
   created_at: string;
 }

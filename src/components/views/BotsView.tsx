@@ -480,15 +480,25 @@ export function BotsView({
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    const targetId = deleteTarget.id;
+    const targetUsername = deleteTarget.username;
     setBusyAction('delete');
     try {
-      await apiFetch(`/api/bots/${deleteTarget.id}`, { method: 'DELETE' });
-      onToast('info', 'Bot Removed', `@${deleteTarget.username} and its encrypted credentials were removed.`);
-      if (activeBotId === deleteTarget.id) onSelectBot(null);
+      await apiFetch(`/api/bots/${targetId}`, { method: 'DELETE' });
+      onToast('info', 'Bot Removed', `@${targetUsername} and its encrypted credentials were removed.`);
+      if (activeBotId === targetId) onSelectBot(null);
       setDeleteTarget(null);
       onRefresh();
     } catch (err) {
-      onToast('error', 'Delete Failed', err instanceof Error ? err.message : undefined);
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.toLowerCase().includes('not found')) {
+        if (activeBotId === targetId) onSelectBot(null);
+        setDeleteTarget(null);
+        onRefresh();
+        onToast('info', 'Bot Removed', `@${targetUsername} is no longer in your connected fleet.`);
+      } else {
+        onToast('error', 'Delete Failed', msg || undefined);
+      }
     } finally {
       setBusyAction(null);
     }

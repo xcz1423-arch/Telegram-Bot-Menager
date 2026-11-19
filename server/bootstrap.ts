@@ -34,8 +34,8 @@ export function ensureServerlessBootstrap(force = false): void {
   const adminCount = (db.prepare('SELECT COUNT(*) as cnt FROM admin_users').get() as { cnt: number }).cnt;
   if (adminCount === 0 && envPassword.length >= 8) {
     db.prepare(`
-      INSERT INTO admin_users (username, display_name, password_hash, recovery_hint)
-      VALUES (?, ?, ?, 'Configured via environment variable')
+      INSERT INTO admin_users (username, display_name, password_hash, role, recovery_hint)
+      VALUES (?, ?, ?, 'admin', 'Configured via environment variable')
     `).run(envUsername, envDisplayName || envUsername, hashPassword(envPassword));
 
     logActivity({

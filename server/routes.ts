@@ -9,6 +9,7 @@ import {
   incrementDailyAnalytics,
   isServerlessRuntime,
   logActivity,
+  logAdminAudit,
   pushNotification,
   setSetting,
 } from './db.js';
@@ -32,6 +33,7 @@ import {
   getClientIp,
   parseCookies,
   recordLoginAttempt,
+  requireAdmin,
   requireAuth,
   resolveSessionFromRequest,
   SESSION_COOKIE_NAME,
@@ -113,12 +115,46 @@ apiRouter.post('/webhook/:botKey', (req, res) => {
   res.status(outcome.httpStatus).json({ ok: outcome.ok, status: outcome.status, message: outcome.message });
 });
 
+const VALID_BADGES = new Set(['none', 'verified_blue', 'vip_gold', 'dev_pro', 'shield_ops', 'creator']);
+
+function sanitizeUserAvatar(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(trimmed) && trimmed.length <= 120_000) {
+    return trimmed;
+  }
+  return null;
+}
+
+function formatUserForClient(row: {
+  id: number;
+  username: string;
+  display_name: string;
+  role?: string | null;
+  avatar_url?: string | null;
+  badge?: string | null;
+  created_ip?: string | null;
+  last_login_at?: string | null;
+}) {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    role: row.role === 'admin' ? ('admin' as const) : ('user' as const),
+    avatarUrl: row.avatar_url || null,
+    badge: row.badge && VALID_BADGES.has(row.badge) ? row.badge : 'none',
+    createdIp: row.created_ip || null,
+    lastLoginAt: row.last_login_at || null,
+  };
+}
+
 // ============================================================================
-// SINGLE-ADMIN AUTHENTICATION
+// MULTI-USER & ADMIN AUTHENTICATION
 // ============================================================================
 apiRouter.get('/auth/status', (req, res) => {
   const adminCount = (db.prepare('SELECT COUNT(*) as cnt FROM admin_users').get() as { cnt: number }).cnt;
-  const { session, hadCookie } = resolveSessionFromRequest(req);
+  const { session, hadCookie, blocked } = resolveSessionFromRequest(req);
 
   if (!session) {
     if (hadCookie) {
@@ -127,6 +163,7 @@ apiRouter.get('/auth/status', (req, res) => {
     res.json({
       setupRequired: adminCount === 0,
       authenticated: false,
+      blocked: Boolean(blocked),
     });
     return;
   }
@@ -139,6 +176,10 @@ apiRouter.get('/auth/status', (req, res) => {
       id: session.userId,
       username: session.username,
       displayName: session.displayName,
+      role: session.role,
+      avatarUrl: session.avatarUrl,
+      badge: session.badge,
+      createdIp: session.createdIp,
       lastLoginAt: session.lastLoginAt,
     },
   });
@@ -147,16 +188,21 @@ apiRouter.get('/auth/status', (req, res) => {
 apiRouter.post('/auth/setup', (req, res) => {
   const adminCount = (db.prepare('SELECT COUNT(*) as cnt FROM admin_users').get() as { cnt: number }).cnt;
   if (adminCount > 0) {
-    res.status(403).json({ error: 'Administrator account already exists. Initial setup is locked.' });
+    res.status(403).json({ error: 'Administrator account already exists. Use Create Account or Sign In.' });
     return;
   }
 
   const username = String(req.body?.username ?? '').trim();
-  const displayName = String(req.body?.displayName ?? username).trim();
+  const displayName = String(req.body?.displayName ?? '').trim();
   const password = String(req.body?.password ?? '');
   const recoveryHint = String(req.body?.recoveryHint ?? '').trim();
   const seedDemo = Boolean(req.body?.seedDemo ?? false);
+  const avatarUrl = sanitizeUserAvatar(req.body?.avatarDataUrl);
 
+  if (!displayName) {
+    res.status(400).json({ error: 'Full Name is required.' });
+    return;
+  }
   if (username.length < 3 || !/^[a-zA-Z0-9_.-]+$/.test(username)) {
     res.status(400).json({ error: 'Username must be at least 3 characters (letters, numbers, _, ., -).' });
     return;
@@ -166,16 +212,16 @@ apiRouter.post('/auth/setup', (req, res) => {
     return;
   }
 
+  const ip = getClientIp(req);
   const passwordHash = hashPassword(password);
   const insert = db
     .prepare(`
-      INSERT INTO admin_users (username, display_name, password_hash, recovery_hint, last_login_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
+      INSERT INTO admin_users (username, display_name, password_hash, role, avatar_url, badge, created_ip, recovery_hint, last_login_at)
+      VALUES (?, ?, ?, 'admin', ?, 'verified_blue', ?, ?, datetime('now'))
     `)
-    .run(username, displayName || username, passwordHash, recoveryHint || null);
+    .run(username, displayName, passwordHash, avatarUrl, ip, recoveryHint || null);
 
   const userId = Number(insert.lastInsertRowid);
-  const ip = getClientIp(req);
 
   if (seedDemo) {
     const baseUrl = getSuggestedWebhookBaseUrl({
@@ -205,32 +251,153 @@ apiRouter.post('/auth/setup', (req, res) => {
     action: 'ADMIN_SETUP_COMPLETE',
     status: 'success',
     relatedResource: username,
-    details: 'Created single-admin account and locked setup.',
+    details: 'Created primary administrator account.',
     ipAddress: ip,
   });
 
   res.status(201).json({
     ok: true,
     csrfToken: session.csrfToken,
-    admin: { id: userId, username, displayName: displayName || username },
+    admin: {
+      id: userId,
+      username,
+      displayName,
+      role: 'admin',
+      avatarUrl,
+      badge: 'verified_blue',
+      createdIp: ip,
+    },
+  });
+});
+
+apiRouter.post('/auth/register', (req, res) => {
+  const username = String(req.body?.username ?? '').trim();
+  const displayName = String(req.body?.displayName ?? '').trim();
+  const password = String(req.body?.password ?? '');
+  const avatarUrl = sanitizeUserAvatar(req.body?.avatarDataUrl);
+
+  if (!avatarUrl) {
+    res.status(400).json({ error: 'Profile picture is required to create an account.' });
+    return;
+  }
+  if (!displayName || displayName.length < 2) {
+    res.status(400).json({ error: 'Name is required (minimum 2 characters).' });
+    return;
+  }
+  if (username.length < 3 || !/^[a-zA-Z0-9_.-]+$/.test(username)) {
+    res.status(400).json({ error: 'Username must be at least 3 characters (letters, numbers, _, ., -).' });
+    return;
+  }
+  if (password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    return;
+  }
+
+  const existing = db.prepare('SELECT id FROM admin_users WHERE LOWER(username) = LOWER(?)').get(username);
+  if (existing) {
+    res.status(409).json({ error: 'This username is already taken. Please choose another.' });
+    return;
+  }
+
+  const existingCount = (db.prepare('SELECT COUNT(*) as cnt FROM admin_users').get() as { cnt: number }).cnt;
+  const assignedRole: 'admin' | 'user' = existingCount === 0 ? 'admin' : 'user';
+  const assignedBadge = assignedRole === 'admin' ? 'verified_blue' : 'none';
+  const ip = getClientIp(req);
+
+  const insert = db
+    .prepare(`
+      INSERT INTO admin_users (username, display_name, password_hash, role, avatar_url, badge, is_blocked, created_ip, last_login_at)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, datetime('now'))
+    `)
+    .run(username, displayName, hashPassword(password), assignedRole, avatarUrl, assignedBadge, ip);
+
+  const userId = Number(insert.lastInsertRowid);
+  const session = createAdminSession({
+    userId,
+    rememberMe: true,
+    ipAddress: ip,
+    userAgent: String(req.headers['user-agent'] || 'Unknown'),
+  });
+  setSessionCookie(res, session.rawToken, session.expiresAt);
+
+  db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 1, ?, ?, 'Account created')`).run(
+    username,
+    ip,
+    String(req.headers['user-agent'] || 'Unknown').slice(0, 200)
+  );
+
+  logActivity({
+    action: 'USER_REGISTERED',
+    status: 'success',
+    relatedResource: `@${username}`,
+    details: `New ${assignedRole} account created by ${displayName} from IP ${ip}.`,
+    ipAddress: ip,
+  });
+
+  if (assignedRole === 'user') {
+    pushNotification({
+      recipientRole: 'admin',
+      kind: 'signup_alert',
+      severity: 'info',
+      title: `New Account Created: ${displayName}`,
+      message: `@${username} registered a new account from IP ${ip}.`,
+      senderName: displayName,
+      senderAvatar: avatarUrl,
+      senderBadge: assignedBadge,
+      senderIp: ip,
+    });
+  }
+
+  res.status(201).json({
+    ok: true,
+    csrfToken: session.csrfToken,
+    admin: {
+      id: userId,
+      username,
+      displayName,
+      role: assignedRole,
+      avatarUrl,
+      badge: assignedBadge,
+      createdIp: ip,
+    },
   });
 });
 
 // Fast ?autostart=1 workspace initialization for frictionless evaluation
 apiRouter.post('/auth/autostart', (req, res) => {
-  let admin = db.prepare('SELECT id, username, display_name FROM admin_users LIMIT 1').get() as
-    | { id: number; username: string; display_name: string }
+  let admin = db
+    .prepare('SELECT id, username, display_name, role, avatar_url, badge, created_ip, last_login_at FROM admin_users ORDER BY id ASC LIMIT 1')
+    .get() as
+    | {
+        id: number;
+        username: string;
+        display_name: string;
+        role: string;
+        avatar_url: string | null;
+        badge: string;
+        created_ip: string | null;
+        last_login_at: string | null;
+      }
     | undefined;
 
   if (!admin) {
     const pw = generateRandomToken(12);
     const ins = db
       .prepare(`
-        INSERT INTO admin_users (username, display_name, password_hash, recovery_hint, last_login_at)
-        VALUES ('admin', 'Lead Developer', ?, 'Configured via XC_RECOVERY_CODE', datetime('now'))
+        INSERT INTO admin_users (username, display_name, password_hash, role, badge, recovery_hint, last_login_at)
+        VALUES ('admin', 'Lead Developer', ?, 'admin', 'verified_blue', 'Configured via XC_RECOVERY_CODE', datetime('now'))
       `)
       .run(hashPassword(pw));
-    admin = { id: Number(ins.lastInsertRowid), username: 'admin', display_name: 'Lead Developer' };
+    admin = {
+      id: Number(ins.lastInsertRowid),
+      username: 'admin',
+      display_name: 'Lead Developer',
+      role: 'admin',
+      avatar_url: null,
+      badge: 'verified_blue',
+      created_ip: getClientIp(req),
+      last_login_at: null,
+    };
   }
 
   const baseUrl = getSuggestedWebhookBaseUrl({
@@ -253,7 +420,7 @@ apiRouter.post('/auth/autostart', (req, res) => {
   res.json({
     ok: true,
     csrfToken: session.csrfToken,
-    admin: { id: admin.id, username: admin.username, displayName: admin.display_name },
+    admin: formatUserForClient(admin),
   });
 });
 
@@ -277,8 +444,19 @@ apiRouter.post('/auth/login', (req, res) => {
     return;
   }
 
-  const user = db.prepare('SELECT * FROM admin_users WHERE username = ?').get(username) as
-    | { id: number; username: string; display_name: string; password_hash: string }
+  const user = db.prepare('SELECT * FROM admin_users WHERE LOWER(username) = LOWER(?)').get(username) as
+    | {
+        id: number;
+        username: string;
+        display_name: string;
+        password_hash: string;
+        role: string;
+        avatar_url: string | null;
+        badge: string;
+        is_blocked: number;
+        created_ip: string | null;
+        last_login_at: string | null;
+      }
     | undefined;
 
   if (!user || !verifyPassword(password, user.password_hash)) {
@@ -296,6 +474,16 @@ apiRouter.post('/auth/login', (req, res) => {
       ipAddress: ip,
     });
     res.status(401).json({ error: 'Invalid username or password.' });
+    return;
+  }
+
+  if (Boolean(user.is_blocked)) {
+    db.prepare(`INSERT INTO login_history (username, success, ip_address, user_agent, reason) VALUES (?, 0, ?, ?, 'Blocked account')`).run(
+      user.username,
+      ip,
+      ua
+    );
+    res.status(403).json({ error: 'This account has been blocked by the administrator.' });
     return;
   }
 
@@ -326,7 +514,7 @@ apiRouter.post('/auth/login', (req, res) => {
   res.json({
     ok: true,
     csrfToken: session.csrfToken,
-    admin: { id: user.id, username: user.username, displayName: user.display_name },
+    admin: formatUserForClient(user),
   });
 });
 
@@ -413,10 +601,104 @@ apiRouter.post('/auth/change-password', (req, res) => {
     action: 'ADMIN_PASSWORD_CHANGED',
     status: 'success',
     relatedResource: user.username,
-    details: 'Administrator password rotated.',
+    details: 'Password rotated.',
     ipAddress: getClientIp(req),
   });
   res.json({ ok: true, message: 'Password changed successfully.' });
+});
+
+apiRouter.patch('/auth/profile', (req, res) => {
+  const user = db
+    .prepare('SELECT id, username, display_name, role, avatar_url, badge, created_ip, last_login_at FROM admin_users WHERE id = ?')
+    .get(req.auth!.userId) as
+    | {
+        id: number;
+        username: string;
+        display_name: string;
+        role: string;
+        avatar_url: string | null;
+        badge: string;
+        created_ip: string | null;
+        last_login_at: string | null;
+      }
+    | undefined;
+
+  if (!user) {
+    res.status(404).json({ error: 'User profile not found.' });
+    return;
+  }
+
+  const nextDisplayName = req.body?.displayName !== undefined ? String(req.body.displayName).trim() : user.display_name;
+  if (!nextDisplayName || nextDisplayName.length < 2 || nextDisplayName.length > 64) {
+    res.status(400).json({ error: 'Display name must be between 2 and 64 characters.' });
+    return;
+  }
+
+  let nextAvatarUrl = user.avatar_url;
+  if (req.body?.avatarDataUrl !== undefined) {
+    if (req.body.avatarDataUrl === '' || req.body.avatarDataUrl === null) {
+      nextAvatarUrl = null;
+    } else {
+      const sanitized = sanitizeUserAvatar(req.body.avatarDataUrl);
+      if (!sanitized) {
+        res.status(400).json({ error: 'Invalid profile picture format or size.' });
+        return;
+      }
+      nextAvatarUrl = sanitized;
+    }
+  }
+
+  const requestedBadge = req.body?.badge !== undefined ? String(req.body.badge).trim() : user.badge || 'none';
+  if (!VALID_BADGES.has(requestedBadge)) {
+    res.status(400).json({ error: 'Invalid verified badge selection.' });
+    return;
+  }
+
+  const changes: string[] = [];
+  if (nextDisplayName !== user.display_name) {
+    changes.push(`Name: "${user.display_name}" → "${nextDisplayName}"`);
+  }
+  if (nextAvatarUrl !== user.avatar_url) {
+    changes.push('Profile picture updated');
+  }
+  if (requestedBadge !== (user.badge || 'none')) {
+    changes.push(`Verified badge: ${requestedBadge}`);
+  }
+
+  db.prepare(`
+    UPDATE admin_users
+    SET display_name = ?, avatar_url = ?, badge = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(nextDisplayName, nextAvatarUrl, requestedBadge, user.id);
+
+  const ip = getClientIp(req);
+  if (changes.length > 0) {
+    logActivity({
+      action: 'PROFILE_UPDATED',
+      status: 'success',
+      relatedResource: `@${user.username}`,
+      details: changes.join(' · '),
+      ipAddress: ip,
+    });
+
+    pushNotification({
+      recipientRole: 'admin',
+      kind: 'profile_change',
+      severity: 'info',
+      title: `Profile Updated: ${nextDisplayName}`,
+      message: `@${user.username} updated their profile (${changes.join(', ')}) from IP ${ip}.`,
+      senderName: nextDisplayName,
+      senderAvatar: nextAvatarUrl,
+      senderBadge: requestedBadge,
+      senderIp: ip,
+    });
+  }
+
+  const updated = db
+    .prepare('SELECT id, username, display_name, role, avatar_url, badge, created_ip, last_login_at FROM admin_users WHERE id = ?')
+    .get(user.id) as typeof user;
+
+  res.json({ ok: true, admin: formatUserForClient(updated) });
 });
 
 apiRouter.get('/auth/sessions', (req, res) => {
@@ -934,7 +1216,7 @@ apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
     return;
   }
 
-  db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
+  db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
 
   logActivity({
     action: 'BOT_PHOTO_REMOVED',
@@ -1035,7 +1317,7 @@ apiRouter.delete('/bots/:id', (req, res) => {
     return;
   }
   db.prepare('DELETE FROM bots WHERE id = ?').run(bot.id);
-  db.prepare('DELETE FROM app_settings WHERE key = ?').run(`bot_avatar_${bot.id}`);
+  db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
   logActivity({
     action: 'BOT_REMOVED',
     botId: null,
@@ -1067,7 +1349,16 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
   }
 
   const messageType = String(req.body?.messageType ?? 'text');
-  const chatId = String(req.body?.chatId ?? '').trim();
+  const rawChatIds: string[] = Array.isArray(req.body?.chatIds)
+    ? req.body.chatIds.map((c: unknown) => String(c).trim()).filter(Boolean)
+    : String(req.body?.chatId ?? '')
+        .split(/[\n,]+/)
+        .map((c) => c.trim())
+        .filter(Boolean);
+  const targetChatIds = Array.from(new Set(rawChatIds));
+  const requestedRepeat = Number(req.body?.repeatCount ?? 1);
+  const repeatCount = Number.isFinite(requestedRepeat) ? Math.min(50, Math.max(1, Math.floor(requestedRepeat))) : 1;
+
   const text = String(req.body?.text ?? '');
   const mediaUrl = String(req.body?.mediaUrl ?? '').trim();
   const parseMode = req.body?.parseMode && req.body.parseMode !== 'None' ? String(req.body.parseMode) : undefined;
@@ -1075,8 +1366,14 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
   const protectContent = Boolean(req.body?.protectContent);
   const replyMarkup = req.body?.replyMarkup ?? undefined;
 
-  if (!chatId) {
-    res.status(400).json({ error: 'Target Chat ID is required.' });
+  if (targetChatIds.length === 0) {
+    res.status(400).json({ error: 'At least one Target Chat ID is required.' });
+    return;
+  }
+  if (targetChatIds.length * repeatCount > 100) {
+    res.status(400).json({
+      error: `Total dispatch burst (${targetChatIds.length} chats × ${repeatCount} repeats = ${targetChatIds.length * repeatCount}) exceeds the 100-message safety limit per batch.`,
+    });
     return;
   }
 
@@ -1100,10 +1397,10 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
     return;
   }
 
-  const payload: Record<string, unknown> = { chat_id: chatId };
-  if (disableNotification) payload.disable_notification = true;
-  if (protectContent) payload.protect_content = true;
-  if (replyMarkup) payload.reply_markup = replyMarkup;
+  const basePayload: Record<string, unknown> = {};
+  if (disableNotification) basePayload.disable_notification = true;
+  if (protectContent) basePayload.protect_content = true;
+  if (replyMarkup) basePayload.reply_markup = replyMarkup;
 
   let preview = text;
 
@@ -1112,17 +1409,17 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
       res.status(400).json({ error: 'Message text cannot be empty.' });
       return;
     }
-    payload.text = text;
-    if (parseMode) payload.parse_mode = parseMode;
+    basePayload.text = text;
+    if (parseMode) basePayload.parse_mode = parseMode;
   } else if (['photo', 'video', 'document', 'audio', 'voice', 'animation'].includes(messageType)) {
     if (!mediaUrl) {
       res.status(400).json({ error: `A media URL or Telegram file_id is required for ${messageType}.` });
       return;
     }
-    payload[messageType] = mediaUrl;
+    basePayload[messageType] = mediaUrl;
     if (text.trim()) {
-      payload.caption = text;
-      if (parseMode) payload.parse_mode = parseMode;
+      basePayload.caption = text;
+      if (parseMode) basePayload.parse_mode = parseMode;
     }
     preview = text.trim() ? `[${messageType}] ${text}` : `[${messageType}] ${mediaUrl}`;
   } else if (messageType === 'location') {
@@ -1132,8 +1429,8 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
       res.status(400).json({ error: 'Valid numeric latitude and longitude are required.' });
       return;
     }
-    payload.latitude = lat;
-    payload.longitude = lon;
+    basePayload.latitude = lat;
+    basePayload.longitude = lon;
     preview = `Location (${lat.toFixed(4)}, ${lon.toFixed(4)})`;
   } else if (messageType === 'contact') {
     const phone = String(req.body?.phoneNumber ?? '').trim();
@@ -1142,9 +1439,9 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
       res.status(400).json({ error: 'Contact phone number and first name are required.' });
       return;
     }
-    payload.phone_number = phone;
-    payload.first_name = firstName;
-    if (req.body?.lastName) payload.last_name = String(req.body.lastName);
+    basePayload.phone_number = phone;
+    basePayload.first_name = firstName;
+    if (req.body?.lastName) basePayload.last_name = String(req.body.lastName);
     preview = `Contact: ${firstName} (${phone})`;
   } else if (messageType === 'poll') {
     const question = String(req.body?.pollQuestion ?? '').trim();
@@ -1153,9 +1450,9 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
       res.status(400).json({ error: 'Poll requires a question and at least 2 options.' });
       return;
     }
-    payload.question = question;
-    payload.options = options;
-    payload.is_anonymous = req.body?.pollAnonymous !== false;
+    basePayload.question = question;
+    basePayload.options = options;
+    basePayload.is_anonymous = req.body?.pollAnonymous !== false;
     preview = `Poll: ${question}`;
   } else if (messageType === 'media_group') {
     const items = Array.isArray(req.body?.mediaGroup) ? req.body.mediaGroup : [];
@@ -1163,58 +1460,85 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
       res.status(400).json({ error: 'Media Group requires at least 2 media URLs.' });
       return;
     }
-    payload.media = items;
+    basePayload.media = items;
     preview = `Media Group (${items.length} items)`;
   }
 
-  const outcome = await executeBotMethod(bot, method, payload);
-  const tgMsgId =
-    outcome.ok && outcome.result && typeof (outcome.result as Record<string, unknown>).message_id === 'number'
-      ? Number((outcome.result as Record<string, unknown>).message_id)
-      : null;
+  let sentCount = 0;
+  let failedCount = 0;
+  let totalDurationMs = 0;
+  let lastError: string | undefined;
+  let lastResponse: unknown = null;
 
-  db.prepare(`
-    INSERT INTO bot_messages (
-      bot_id, telegram_message_id, chat_id, message_type, parse_mode,
-      content_preview, reply_markup_json, delivery_status, api_response_json, error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    bot.id,
-    tgMsgId,
-    chatId,
-    messageType,
-    parseMode || null,
-    preview.slice(0, 500),
-    replyMarkup ? JSON.stringify(replyMarkup) : null,
-    outcome.ok ? 'sent' : 'failed',
-    redactSecrets(JSON.stringify(outcome.rawResponse)),
-    outcome.ok ? null : outcome.description || 'Delivery failed'
-  );
+  for (let round = 0; round < repeatCount; round += 1) {
+    for (const targetChatId of targetChatIds) {
+      const payload = { ...basePayload, chat_id: targetChatId };
+      const outcome = await executeBotMethod(bot, method, payload);
+      totalDurationMs += outcome.durationMs;
+      lastResponse = outcome.rawResponse;
 
-  if (outcome.ok) {
-    incrementDailyAnalytics({ botId: bot.id, messagesSent: 1 });
-    db.prepare(`
-      INSERT INTO bot_chats (bot_id, chat_id, chat_type, last_interaction_at)
-      VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(bot_id, chat_id) DO UPDATE SET last_interaction_at = datetime('now')
-    `).run(bot.id, chatId, chatId.startsWith('-100') ? 'supergroup' : chatId.startsWith('-') ? 'group' : chatId.startsWith('@') ? 'channel' : 'private');
+      const tgMsgId =
+        outcome.ok && outcome.result && typeof (outcome.result as Record<string, unknown>).message_id === 'number'
+          ? Number((outcome.result as Record<string, unknown>).message_id)
+          : null;
+
+      db.prepare(`
+        INSERT INTO bot_messages (
+          bot_id, telegram_message_id, chat_id, message_type, parse_mode,
+          content_preview, reply_markup_json, delivery_status, api_response_json, error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        bot.id,
+        tgMsgId,
+        targetChatId,
+        messageType,
+        parseMode || null,
+        preview.slice(0, 500),
+        replyMarkup ? JSON.stringify(replyMarkup) : null,
+        outcome.ok ? 'sent' : 'failed',
+        redactSecrets(JSON.stringify(outcome.rawResponse)),
+        outcome.ok ? null : outcome.description || 'Delivery failed'
+      );
+
+      if (outcome.ok) {
+        sentCount += 1;
+        incrementDailyAnalytics({ botId: bot.id, messagesSent: 1 });
+        db.prepare(`
+          INSERT INTO bot_chats (bot_id, chat_id, chat_type, last_interaction_at)
+          VALUES (?, ?, ?, datetime('now'))
+          ON CONFLICT(bot_id, chat_id) DO UPDATE SET last_interaction_at = datetime('now')
+        `).run(
+          bot.id,
+          targetChatId,
+          targetChatId.startsWith('-100') ? 'supergroup' : targetChatId.startsWith('-') ? 'group' : targetChatId.startsWith('@') ? 'channel' : 'private'
+        );
+      } else {
+        failedCount += 1;
+        lastError = outcome.description || 'Delivery failed';
+      }
+    }
   }
 
   logActivity({
     action: 'MESSAGE_SENT',
     botId: bot.id,
     botName: bot.name,
-    status: outcome.ok ? 'success' : 'failed',
-    relatedResource: `${method} -> ${chatId}`,
-    details: outcome.ok ? preview.slice(0, 120) : outcome.description || 'Failed',
+    status: sentCount > 0 ? (failedCount > 0 ? 'warning' : 'success') : 'failed',
+    relatedResource: `${method} -> ${targetChatIds.length} chat(s) × ${repeatCount}`,
+    details: sentCount > 0 ? `Delivered ${sentCount}/${sentCount + failedCount} messages: ${preview.slice(0, 90)}` : lastError || 'Failed',
     ipAddress: getClientIp(req),
   });
 
-  res.status(outcome.ok ? 200 : 400).json({
-    ok: outcome.ok,
-    durationMs: outcome.durationMs,
-    response: outcome.rawResponse,
-    error: outcome.ok ? undefined : outcome.description,
+  res.status(sentCount > 0 ? 200 : 400).json({
+    ok: sentCount > 0,
+    sentCount,
+    failedCount,
+    totalCount: sentCount + failedCount,
+    repeatCount,
+    targets: targetChatIds,
+    durationMs: totalDurationMs,
+    response: lastResponse,
+    error: sentCount > 0 ? undefined : lastError,
   });
 });
 
@@ -2095,16 +2419,241 @@ apiRouter.get('/activity-logs/export', (_req, res) => {
 });
 
 // ============================================================================
+// ADMIN USER MANAGEMENT, BROADCAST NOTIFICATIONS & AUDIT LOG
+// ============================================================================
+apiRouter.get('/admin/users', requireAdmin, (_req, res) => {
+  const users = db
+    .prepare(`
+      SELECT id, username, display_name, role, avatar_url, badge, is_blocked, created_ip, last_login_at, created_at
+      FROM admin_users
+      ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, id ASC
+    `)
+    .all() as Array<Record<string, unknown>>;
+
+  res.json({
+    users: users.map((u) => ({
+      id: Number(u.id),
+      username: String(u.username),
+      displayName: String(u.display_name),
+      role: u.role === 'admin' ? 'admin' : 'user',
+      avatarUrl: (u.avatar_url as string | null) || null,
+      badge: String(u.badge || 'none'),
+      isBlocked: Boolean(u.is_blocked),
+      createdIp: (u.created_ip as string | null) || null,
+      lastLoginAt: (u.last_login_at as string | null) || null,
+      createdAt: String(u.created_at || ''),
+    })),
+  });
+});
+
+apiRouter.patch('/admin/users/:id/block', requireAdmin, (req, res) => {
+  const targetId = Number(req.params.id);
+  if (targetId === req.auth!.userId) {
+    res.status(400).json({ error: 'You cannot block your own active administrator account.' });
+    return;
+  }
+  const target = db.prepare('SELECT id, username, display_name, is_blocked FROM admin_users WHERE id = ?').get(targetId) as
+    | { id: number; username: string; display_name: string; is_blocked: number }
+    | undefined;
+  if (!target) {
+    res.status(404).json({ error: 'User account not found.' });
+    return;
+  }
+
+  const nextBlocked = req.body?.blocked !== undefined ? Boolean(req.body.blocked) : !Boolean(target.is_blocked);
+  db.prepare(`UPDATE admin_users SET is_blocked = ?, updated_at = datetime('now') WHERE id = ?`).run(nextBlocked ? 1 : 0, target.id);
+  if (nextBlocked) {
+    db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(target.id);
+  }
+
+  logAdminAudit({
+    adminUserId: req.auth!.userId,
+    adminUsername: req.auth!.username,
+    adminDisplayName: req.auth!.displayName,
+    adminAvatar: req.auth!.avatarUrl,
+    actionType: nextBlocked ? 'USER_BLOCKED' : 'USER_UNBLOCKED',
+    affectedUserId: target.id,
+    affectedUsername: target.username,
+    affectedDisplayName: target.display_name,
+    details: nextBlocked
+      ? `Blocked @${target.username} (${target.display_name}) from accessing the webapp.`
+      : `Unblocked @${target.username} (${target.display_name}) and restored login access.`,
+  });
+
+  res.json({ ok: true, isBlocked: nextBlocked });
+});
+
+apiRouter.patch('/admin/users/:id/role', requireAdmin, (req, res) => {
+  const targetId = Number(req.params.id);
+  const requestedRole = req.body?.role === 'admin' ? 'admin' : 'user';
+  const target = db.prepare('SELECT id, username, display_name, role FROM admin_users WHERE id = ?').get(targetId) as
+    | { id: number; username: string; display_name: string; role: string }
+    | undefined;
+  if (!target) {
+    res.status(404).json({ error: 'User account not found.' });
+    return;
+  }
+
+  if (target.id === req.auth!.userId && requestedRole !== 'admin') {
+    const adminCount = (db.prepare(`SELECT COUNT(*) as cnt FROM admin_users WHERE role = 'admin'`).get() as { cnt: number }).cnt;
+    if (adminCount <= 1) {
+      res.status(400).json({ error: 'At least one administrator account must remain active.' });
+      return;
+    }
+  }
+
+  db.prepare(`UPDATE admin_users SET role = ?, updated_at = datetime('now') WHERE id = ?`).run(requestedRole, target.id);
+
+  logAdminAudit({
+    adminUserId: req.auth!.userId,
+    adminUsername: req.auth!.username,
+    adminDisplayName: req.auth!.displayName,
+    adminAvatar: req.auth!.avatarUrl,
+    actionType: requestedRole === 'admin' ? 'ADMIN_PROMOTED' : 'ADMIN_DEMOTED',
+    affectedUserId: target.id,
+    affectedUsername: target.username,
+    affectedDisplayName: target.display_name,
+    details:
+      requestedRole === 'admin'
+        ? `Promoted @${target.username} (${target.display_name}) to Administrator.`
+        : `Revoked Administrator privileges from @${target.username} (${target.display_name}).`,
+  });
+
+  pushNotification({
+    targetUserId: target.id,
+    recipientRole: 'user',
+    kind: 'admin_broadcast',
+    severity: requestedRole === 'admin' ? 'success' : 'warning',
+    title: requestedRole === 'admin' ? 'Admin Access Granted' : 'Role Updated',
+    message:
+      requestedRole === 'admin'
+        ? `${req.auth!.displayName} granted Administrator privileges to your account.`
+        : `${req.auth!.displayName} changed your role to standard User.`,
+    senderName: req.auth!.displayName,
+    senderAvatar: req.auth!.avatarUrl,
+    senderBadge: req.auth!.badge,
+  });
+
+  res.json({ ok: true, role: requestedRole });
+});
+
+apiRouter.delete('/admin/users/:id', requireAdmin, (req, res) => {
+  const targetId = Number(req.params.id);
+  if (targetId === req.auth!.userId) {
+    res.status(400).json({ error: 'You cannot delete your own active administrator account.' });
+    return;
+  }
+  const target = db.prepare('SELECT id, username, display_name FROM admin_users WHERE id = ?').get(targetId) as
+    | { id: number; username: string; display_name: string }
+    | undefined;
+  if (!target) {
+    res.status(404).json({ error: 'User account not found.' });
+    return;
+  }
+
+  db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(target.id);
+  db.prepare('DELETE FROM admin_users WHERE id = ?').run(target.id);
+
+  logAdminAudit({
+    adminUserId: req.auth!.userId,
+    adminUsername: req.auth!.username,
+    adminDisplayName: req.auth!.displayName,
+    adminAvatar: req.auth!.avatarUrl,
+    actionType: 'ACCOUNT_DELETED',
+    affectedUserId: target.id,
+    affectedUsername: target.username,
+    affectedDisplayName: target.display_name,
+    details: `Permanently deleted user account @${target.username} (${target.display_name}).`,
+  });
+
+  res.json({ ok: true });
+});
+
+apiRouter.get('/admin/audit-logs', requireAdmin, (_req, res) => {
+  const logs = db
+    .prepare(`SELECT * FROM admin_audit_logs ORDER BY created_at DESC, id DESC LIMIT 100`)
+    .all();
+  res.json({ logs });
+});
+
+apiRouter.post('/admin/notifications/broadcast', requireAdmin, (req, res) => {
+  const title = String(req.body?.title ?? '').trim();
+  const message = String(req.body?.message ?? '').trim();
+  const severity = ['info', 'success', 'warning', 'error'].includes(String(req.body?.severity))
+    ? (String(req.body.severity) as 'info' | 'success' | 'warning' | 'error')
+    : 'info';
+  const targetUserId = req.body?.targetUserId ? Number(req.body.targetUserId) : null;
+
+  if (!title || !message) {
+    res.status(400).json({ error: 'Notification title and message are required.' });
+    return;
+  }
+
+  let targetUser: { id: number; username: string; display_name: string } | undefined;
+  if (targetUserId) {
+    targetUser = db.prepare('SELECT id, username, display_name FROM admin_users WHERE id = ?').get(targetUserId) as
+      | { id: number; username: string; display_name: string }
+      | undefined;
+    if (!targetUser) {
+      res.status(404).json({ error: 'Selected recipient user not found.' });
+      return;
+    }
+  }
+
+  pushNotification({
+    targetUserId: targetUser ? targetUser.id : null,
+    recipientRole: 'all',
+    kind: 'admin_broadcast',
+    severity,
+    title,
+    message,
+    senderName: req.auth!.displayName,
+    senderAvatar: req.auth!.avatarUrl,
+    senderBadge: req.auth!.badge,
+  });
+
+  logAdminAudit({
+    adminUserId: req.auth!.userId,
+    adminUsername: req.auth!.username,
+    adminDisplayName: req.auth!.displayName,
+    adminAvatar: req.auth!.avatarUrl,
+    actionType: 'NOTIFICATION_SENT',
+    affectedUserId: targetUser?.id ?? null,
+    affectedUsername: targetUser?.username ?? 'all_users',
+    affectedDisplayName: targetUser?.display_name ?? 'All Registered Users',
+    details: `Sent message "${title}" to ${targetUser ? `@${targetUser.username}` : 'all users'}.`,
+  });
+
+  res.status(201).json({ ok: true });
+});
+
+// ============================================================================
 // NOTIFICATIONS, SETTINGS, SYSTEM HEALTH, BACKUP & RESTORE
 // ============================================================================
-apiRouter.get('/notifications', (_req, res) => {
-  const items = db.prepare('SELECT * FROM notifications ORDER BY created_at DESC LIMIT 20').all();
-  const unread = (db.prepare('SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0').get() as { cnt: number }).cnt;
+apiRouter.get('/notifications', (req, res) => {
+  const isAdmin = req.auth!.role === 'admin';
+  const userId = req.auth!.userId;
+  const whereClause = isAdmin
+    ? `(target_user_id IS NULL OR target_user_id = ? OR recipient_role = 'admin')`
+    : `(target_user_id = ? OR (target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
+
+  const items = db
+    .prepare(`SELECT * FROM notifications WHERE ${whereClause} ORDER BY created_at DESC, id DESC LIMIT 30`)
+    .all(userId);
+  const unread = (
+    db.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0 AND ${whereClause}`).get(userId) as { cnt: number }
+  ).cnt;
   res.json({ notifications: items, unread });
 });
 
-apiRouter.post('/notifications/read-all', (_req, res) => {
-  db.prepare('UPDATE notifications SET is_read = 1 WHERE is_read = 0').run();
+apiRouter.post('/notifications/read-all', (req, res) => {
+  const isAdmin = req.auth!.role === 'admin';
+  const userId = req.auth!.userId;
+  const whereClause = isAdmin
+    ? `(target_user_id IS NULL OR target_user_id = ? OR recipient_role = 'admin')`
+    : `(target_user_id = ? OR (target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
+
+  db.prepare(`UPDATE notifications SET is_read = 1 WHERE is_read = 0 AND ${whereClause}`).run(userId);
   res.json({ ok: true });
 });
 

@@ -45,6 +45,11 @@ const SCHEMA_SQL = `
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    avatar_url TEXT,
+    badge TEXT NOT NULL DEFAULT 'none',
+    is_blocked INTEGER NOT NULL DEFAULT 0,
+    created_ip TEXT,
     recovery_hint TEXT,
     last_login_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -256,10 +261,32 @@ const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bot_id INTEGER,
+    target_user_id INTEGER,
+    recipient_role TEXT NOT NULL DEFAULT 'all',
+    kind TEXT NOT NULL DEFAULT 'system',
     severity TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('info', 'success', 'warning', 'error')),
     title TEXT NOT NULL,
     message TEXT NOT NULL,
+    sender_name TEXT,
+    sender_avatar TEXT,
+    sender_badge TEXT,
+    sender_ip TEXT,
     is_read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- 16. admin_audit_logs
+  CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_user_id INTEGER NOT NULL,
+    admin_username TEXT NOT NULL,
+    admin_display_name TEXT NOT NULL,
+    admin_avatar TEXT,
+    action_type TEXT NOT NULL,
+    affected_user_id INTEGER,
+    affected_username TEXT,
+    affected_display_name TEXT,
+    details TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -286,7 +313,44 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_webhook_logs_bot_time ON webhook_logs(bot_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_activity_logs_time ON activity_logs(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_analytics_daily_date ON analytics_daily(metric_date);
+  CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_logs(created_at DESC, id DESC);
 `;
+
+function ensureColumn(driver: DbDriver, table: string, column: string, definition: string): void {
+  const cols = driver.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  }
+}
+
+function runSchemaMigrations(driver: DbDriver): void {
+  ensureColumn(driver, 'admin_users', 'role', `TEXT NOT NULL DEFAULT 'user'`);
+  ensureColumn(driver, 'admin_users', 'avatar_url', `TEXT`);
+  ensureColumn(driver, 'admin_users', 'badge', `TEXT NOT NULL DEFAULT 'none'`);
+  ensureColumn(driver, 'admin_users', 'is_blocked', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn(driver, 'admin_users', 'created_ip', `TEXT`);
+
+  // Guarantee at least one admin exists whenever users exist (e.g. upgraded single-admin DB)
+  const adminCountRow = driver
+    .prepare(`SELECT COUNT(*) as cnt FROM admin_users WHERE role = 'admin'`)
+    .get() as { cnt: number } | undefined;
+  if (!adminCountRow || adminCountRow.cnt === 0) {
+    const firstUser = driver.prepare(`SELECT id FROM admin_users ORDER BY id ASC LIMIT 1`).get() as
+      | { id: number }
+      | undefined;
+    if (firstUser) {
+      driver.prepare(`UPDATE admin_users SET role = 'admin' WHERE id = ?`).run(firstUser.id);
+    }
+  }
+
+  ensureColumn(driver, 'notifications', 'target_user_id', `INTEGER`);
+  ensureColumn(driver, 'notifications', 'recipient_role', `TEXT NOT NULL DEFAULT 'all'`);
+  ensureColumn(driver, 'notifications', 'kind', `TEXT NOT NULL DEFAULT 'system'`);
+  ensureColumn(driver, 'notifications', 'sender_name', `TEXT`);
+  ensureColumn(driver, 'notifications', 'sender_avatar', `TEXT`);
+  ensureColumn(driver, 'notifications', 'sender_badge', `TEXT`);
+  ensureColumn(driver, 'notifications', 'sender_ip', `TEXT`);
+}
 
 interface SqlJsDatabase {
   exec: (sql: string) => Array<{ columns: string[]; values: unknown[][] }>;
@@ -490,6 +554,7 @@ export async function ensureDbReady(): Promise<void> {
 
       activeDriver.exec('PRAGMA foreign_keys = ON;');
       activeDriver.exec(SCHEMA_SQL);
+      runSchemaMigrations(activeDriver);
       const revRow = activeDriver
         .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
         .get('__vault_rev') as { setting_value: string } | undefined;
@@ -528,13 +593,13 @@ export function bumpVaultRev(): string {
 export function exportDatabaseBytes(): Uint8Array | null {
   if (!activeSqlDb) return null;
   let exported = activeSqlDb.export();
-  if (exported.length > 48_000) {
-    // Keep serverless synced snapshot compact if many logs accumulate
-    const logTables = ['api_logs', 'webhook_logs', 'activity_logs', 'login_history', 'notifications'];
+  if (exported.length > 28_000) {
+    // Keep serverless synced snapshot compact so HTTP requests stay fast and reliable
+    const logTables = ['api_logs', 'webhook_logs', 'activity_logs', 'login_history', 'notifications', 'bot_updates', 'bot_messages'];
     for (const tbl of logTables) {
       try {
         activeSqlDb.exec(
-          `DELETE FROM ${tbl} WHERE id NOT IN (SELECT id FROM ${tbl} ORDER BY id DESC LIMIT 40);`
+          `DELETE FROM ${tbl} WHERE id NOT IN (SELECT id FROM ${tbl} ORDER BY id DESC LIMIT 25);`
         );
       } catch {
         // ignore
@@ -556,6 +621,7 @@ export function replaceDatabaseBytes(bytes: Uint8Array): void {
   restored.exec('PRAGMA foreign_keys = ON;');
   restored.exec(SCHEMA_SQL);
   activeSqlDb = restored;
+  runSchemaMigrations(activeDriver);
 
   const revRow = activeDriver
     .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
@@ -636,14 +702,66 @@ export function logActivity(params: {
 
 export function pushNotification(params: {
   botId?: number | null;
+  targetUserId?: number | null;
+  recipientRole?: 'all' | 'admin' | 'user';
+  kind?: 'system' | 'admin_broadcast' | 'signup_alert' | 'profile_change';
   severity?: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;
+  senderName?: string | null;
+  senderAvatar?: string | null;
+  senderBadge?: string | null;
+  senderIp?: string | null;
 }): void {
   db.prepare(`
-    INSERT INTO notifications (bot_id, severity, title, message)
-    VALUES (?, ?, ?, ?)
-  `).run(params.botId ?? null, params.severity ?? 'info', params.title, params.message);
+    INSERT INTO notifications (
+      bot_id, target_user_id, recipient_role, kind, severity, title, message,
+      sender_name, sender_avatar, sender_badge, sender_ip
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.botId ?? null,
+    params.targetUserId ?? null,
+    params.recipientRole ?? 'all',
+    params.kind ?? 'system',
+    params.severity ?? 'info',
+    params.title,
+    params.message,
+    params.senderName ?? null,
+    params.senderAvatar ?? null,
+    params.senderBadge ?? null,
+    params.senderIp ?? null
+  );
+}
+
+export function logAdminAudit(params: {
+  adminUserId: number;
+  adminUsername: string;
+  adminDisplayName: string;
+  adminAvatar?: string | null;
+  actionType: 'ACCOUNT_DELETED' | 'USER_BLOCKED' | 'USER_UNBLOCKED' | 'ADMIN_PROMOTED' | 'ADMIN_DEMOTED' | 'NOTIFICATION_SENT';
+  affectedUserId?: number | null;
+  affectedUsername?: string | null;
+  affectedDisplayName?: string | null;
+  details: string;
+}): void {
+  db.prepare(`
+    INSERT INTO admin_audit_logs (
+      admin_user_id, admin_username, admin_display_name, admin_avatar,
+      action_type, affected_user_id, affected_username, affected_display_name, details
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.adminUserId,
+    params.adminUsername,
+    params.adminDisplayName,
+    params.adminAvatar ?? null,
+    params.actionType,
+    params.affectedUserId ?? null,
+    params.affectedUsername ?? null,
+    params.affectedDisplayName ?? null,
+    params.details
+  );
 }
 
 export function incrementDailyAnalytics(params: {

@@ -24,9 +24,14 @@ import {
   ChevronRight,
   ChevronDown,
   Plus,
+  UserCircle2,
+  Globe,
+  Megaphone,
+  UserPlus,
 } from 'lucide-react';
 import type { AdminUser, BotSummary, NavTab, NotificationItem, ThemeMode } from '../../types';
 import { Modal } from '../ui/Primitives';
+import { UserAvatar, VerifiedBadgeIcon } from '../ui/VerifiedBadge';
 
 interface NavGroup {
   label: string;
@@ -140,7 +145,6 @@ export function AppShell({
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [avatarError, setAvatarError] = useState(false);
 
   const activeBot = bots.find((b) => b.id === activeBotId) || null;
 
@@ -312,6 +316,31 @@ export function AppShell({
                 type="button"
                 onClick={() => {
                   setMobileDrawerOpen(false);
+                  onNavigate('settings');
+                }}
+                className="w-full p-2.5 rounded-xl bg-[#F6F7FB] dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 flex items-center gap-2.5 text-left"
+              >
+                <UserAvatar
+                  avatarUrl={admin.avatarUrl}
+                  displayName={admin.displayName}
+                  username={admin.username}
+                  badge={admin.badge}
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold truncate flex items-center gap-1">
+                    <span className="truncate">{admin.displayName}</span>
+                    <VerifiedBadgeIcon badge={admin.badge} size="xs" />
+                  </div>
+                  <div className="text-[10px] font-mono text-[#73798C] dark:text-slate-400 truncate">
+                    @{admin.username} · {admin.role}
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileDrawerOpen(false);
                   setSearchOpen(true);
                 }}
                 className="w-full min-h-[44px] px-4 rounded-xl border border-[#E8EAF1] dark:border-slate-800 text-xs font-medium flex items-center justify-center gap-2"
@@ -427,9 +456,12 @@ export function AppShell({
               </button>
 
               {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-24px)] rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-3 z-50">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-3 z-50">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E8EAF1] dark:border-slate-800">
-                    <span className="text-xs font-semibold">Notifications</span>
+                    <span className="text-xs font-semibold flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-[#7565F6]" />
+                      <span>Messages & Notifications</span>
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
@@ -441,21 +473,55 @@ export function AppShell({
                       Mark all read
                     </button>
                   </div>
-                  <div className="max-h-72 overflow-y-auto space-y-2">
+                  <div className="max-h-80 overflow-y-auto space-y-2">
                     {notifications.length === 0 ? (
-                      <p className="text-xs text-[#73798C] dark:text-slate-400 py-4 text-center">No notifications yet.</p>
+                      <p className="text-xs text-[#73798C] dark:text-slate-400 py-5 text-center">No messages or notifications yet.</p>
                     ) : (
                       notifications.map((n) => (
                         <div
                           key={n.id}
-                          className={`p-2.5 rounded-xl text-xs border ${
+                          className={`p-2.5 rounded-xl text-xs border transition-colors ${
                             n.is_read
                               ? 'border-transparent bg-slate-50/60 dark:bg-[#101421]/60'
                               : 'border-[#7565F6]/30 bg-[#7565F6]/5'
                           }`}
                         >
-                          <div className="font-semibold text-[#171A2B] dark:text-slate-100">{n.title}</div>
-                          <p className="text-[#73798C] dark:text-slate-400 mt-0.5">{n.message}</p>
+                          <div className="flex items-start gap-2.5">
+                            {n.sender_avatar ? (
+                              <img
+                                src={n.sender_avatar}
+                                alt={n.sender_name || 'User'}
+                                className="w-8 h-8 rounded-full object-cover border border-[#E8EAF1] dark:border-slate-700 shrink-0 mt-0.5"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-[#7565F6]/12 text-[#7565F6] flex items-center justify-center shrink-0 mt-0.5">
+                                {n.kind === 'signup_alert' ? (
+                                  <UserPlus className="w-3.5 h-3.5" />
+                                ) : n.kind === 'admin_broadcast' ? (
+                                  <Megaphone className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Bell className="w-3.5 h-3.5" />
+                                )}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="font-semibold text-[#171A2B] dark:text-slate-100 truncate">{n.title}</span>
+                                <VerifiedBadgeIcon badge={n.sender_badge} size="xs" />
+                              </div>
+                              <p className="text-[#73798C] dark:text-slate-300 mt-0.5 leading-relaxed break-words">{n.message}</p>
+                              <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[#73798C] dark:text-slate-500">
+                                {n.sender_name && <span>By {n.sender_name}</span>}
+                                {n.sender_ip && (
+                                  <span className="inline-flex items-center gap-0.5 text-[#22C8F6]">
+                                    <Globe className="w-2.5 h-2.5" />
+                                    {n.sender_ip}
+                                  </span>
+                                )}
+                                <span>{n.created_at}</span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       ))
                     )}
@@ -472,30 +538,39 @@ export function AppShell({
                   setProfileOpen(!profileOpen);
                   setNotifOpen(false);
                 }}
-                aria-label="Administrator profile menu"
-                className="flex items-center gap-2 pl-1 pr-2.5 py-1 min-h-[40px] rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                aria-label="User profile menu"
+                className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 min-h-[40px] rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
               >
-                {!avatarError ? (
-                  <img
-                    src="/src/assets/images/avatar_developer_admin_1795013327978.jpg"
-                    alt={admin.displayName}
-                    referrerPolicy="no-referrer"
-                    onError={() => setAvatarError(true)}
-                    className="w-7 h-7 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="w-7 h-7 rounded-lg bg-[#6555E8] text-white text-xs font-bold flex items-center justify-center">
-                    {admin.username.slice(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <span className="text-xs font-medium max-w-[100px] truncate">{admin.displayName}</span>
+                <UserAvatar
+                  avatarUrl={admin.avatarUrl}
+                  displayName={admin.displayName}
+                  username={admin.username}
+                  badge={admin.badge}
+                  size="sm"
+                />
+                <span className="text-xs font-medium max-w-[110px] truncate">{admin.displayName}</span>
+                <VerifiedBadgeIcon badge={admin.badge} size="xs" />
               </button>
 
               {profileOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-2 z-50">
-                  <div className="px-3 py-2 border-b border-[#E8EAF1] dark:border-slate-800 mb-1">
-                    <div className="text-xs font-semibold truncate">{admin.displayName}</div>
-                    <div className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">@{admin.username}</div>
+                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-2 z-50">
+                  <div className="px-3 py-2 border-b border-[#E8EAF1] dark:border-slate-800 mb-1 flex items-center gap-2.5">
+                    <UserAvatar
+                      avatarUrl={admin.avatarUrl}
+                      displayName={admin.displayName}
+                      username={admin.username}
+                      badge={admin.badge}
+                      size="md"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold truncate flex items-center gap-1">
+                        <span className="truncate">{admin.displayName}</span>
+                        <VerifiedBadgeIcon badge={admin.badge} size="xs" />
+                      </div>
+                      <div className="text-[11px] font-mono text-[#73798C] dark:text-slate-400 truncate">
+                        @{admin.username} · {admin.role === 'admin' ? 'Admin' : 'User'}
+                      </div>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -505,8 +580,8 @@ export function AppShell({
                     }}
                     className="w-full text-left px-3 py-2 text-xs rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                   >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span>Settings & Security</span>
+                    <UserCircle2 className="w-3.5 h-3.5" />
+                    <span>My Profile & Settings</span>
                   </button>
                   <button
                     type="button"

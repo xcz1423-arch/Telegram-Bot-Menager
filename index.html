@@ -2,8 +2,8 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>XC BOT CONTROL — Advanced Developer Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>xᴄ ʙᴏᴛ ᴄᴏɴᴛʀᴏʟ — ᴀᴅᴠᴀɴᴄᴇᴅ ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴄᴏɴsᴏʟᴇ</title>
     <meta name="description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
     <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
     <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
@@ -19,6 +19,24 @@
           var isDark = saved === 'dark' || (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
           document.documentElement.classList.toggle('dark', isDark);
         } catch (e) {}
+        document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+        document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+        document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+        document.addEventListener('touchmove', function (e) {
+          if (e.touches && e.touches.length > 1) {
+            e.preventDefault();
+          }
+        }, { passive: false });
+        document.addEventListener('wheel', function (e) {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+          }
+        }, { passive: false });
+        document.addEventListener('keydown', function (e) {
+          if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
+            e.preventDefault();
+          }
+        });
       })();
     </script>
   </head>
