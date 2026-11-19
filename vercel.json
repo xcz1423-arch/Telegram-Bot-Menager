@@ -15,12 +15,23 @@
       "destination": "/api/index.ts"
     },
     {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Telegram|telegram|Twitter|WhatsApp|Discord|facebook|Slack|LinkedIn|WebpageBot|vkShare|SkypeUriPreview).*"
+        }
+      ],
+      "destination": "/api/og-html"
+    },
+    {
       "source": "/((?!api/|assets/|og-preview\\.jpg|favicon\\.ico).*)",
       "has": [
         {
           "type": "header",
           "key": "user-agent",
-          "value": ".*(TelegramBot|Twitterbot|WhatsApp|Discordbot|facebookexternalhit|Slackbot|LinkedInBot|vkShare|SkypeUriPreview).*"
+          "value": ".*(Telegram|telegram|Twitter|WhatsApp|Discord|facebook|Slack|LinkedIn|WebpageBot|vkShare|SkypeUriPreview).*"
         }
       ],
       "destination": "/api/og-html"

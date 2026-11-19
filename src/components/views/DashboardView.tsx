@@ -129,14 +129,21 @@ export function DashboardView({
   return (
     <div className="space-y-6">
       {/* Welcome & Quick Actions Strip */}
-      <section className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 sm:p-5">
-        <div className="min-w-0">
-          <h2 className="text-lg sm:text-xl font-display font-bold tracking-tight">
-            Welcome back, <span data-no-smallcaps="true">{admin.displayName}</span>
-          </h2>
-          <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 font-mono tabular-nums truncate">
-            {nowLabel} · One Dashboard. Complete Bot Control.
-          </p>
+      <section className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 sm:p-5">
+        <div className="flex items-center gap-3.5 sm:gap-5 min-w-0">
+          <img
+            src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+            alt="XC BOT CONTROL"
+            className="w-28 h-[72px] sm:w-40 sm:h-[100px] object-contain shrink-0 border-0"
+          />
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-display font-bold tracking-tight">
+              Welcome back, <span data-no-smallcaps="true">{admin.displayName}</span>
+            </h2>
+            <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 font-mono tabular-nums truncate">
+              {nowLabel} · One Dashboard. Complete Bot Control.
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">

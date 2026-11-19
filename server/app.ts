@@ -34,6 +34,49 @@ export function createApp() {
   app.use(securityHeaders);
   app.use(express.json({ limit: '4mb' }));
 
+  app.get('/api/og-html', (req, res) => {
+    const proto =
+      String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
+        .split(',')[0]
+        .trim()
+        .replace(/[^a-z]/gi, '') || 'https';
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+    const rawHost = (forwardedHost || String(req.get('host') || 'telegram-bot-manager.vercel.app')).replace(
+      /[^a-zA-Z0-9.:-]/g,
+      ''
+    );
+    const origin = `${proto}://${rawHost}`;
+    const ogImage = `${origin}/og-preview.jpg`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>xᴄ ʙᴏᴛ ᴄᴏɴᴛʀᴏʟ — ᴀᴅᴠᴀɴᴄᴇᴅ ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴄᴏɴsᴏʟᴇ</title>
+    <meta name="description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta property="og:site_name" content="XC BOT CONTROL" />
+    <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
+    <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${origin}/" />
+    <meta property="og:image" content="${ogImage}" />
+    <meta property="og:image:secure_url" content="${ogImage}" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="XC BOT CONTROL Logo" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="XC BOT CONTROL — Advanced Developer Console" />
+    <meta name="twitter:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <meta name="twitter:image" content="${ogImage}" />
+  </head>
+  <body>
+    <p>XC BOT CONTROL — Advanced Developer Console</p>
+  </body>
+</html>`);
+  });
+
   app.use('/api', async (req, res, next) => {
     try {
       await ensureAppReady();

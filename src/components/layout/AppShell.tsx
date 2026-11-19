@@ -187,7 +187,7 @@ export function AppShell({
           sidebarCollapsed ? 'w-[74px]' : 'w-[256px]'
         }`}
       >
-        <div className="h-[68px] px-3.5 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800/90 shrink-0">
+        <div className="h-[84px] px-3.5 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800/90 shrink-0">
           <button
             type="button"
             onClick={() => handleNavClick('dashboard')}
@@ -198,12 +198,12 @@ export function AppShell({
               alt={appName}
               className={
                 sidebarCollapsed
-                  ? 'w-9 h-7 object-contain shrink-0 border-0'
-                  : 'w-20 h-14 object-contain shrink-0 border-0'
+                  ? 'w-11 h-8 object-contain shrink-0 border-0'
+                  : 'w-[84px] h-[64px] object-contain shrink-0 border-0'
               }
             />
             {!sidebarCollapsed && (
-              <span className="font-display font-bold text-sm tracking-tight truncate">{appName}</span>
+              <span className="font-display font-bold text-[13px] tracking-tight truncate">{appName}</span>
             )}
           </button>
           <button
@@ -270,12 +270,12 @@ export function AppShell({
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={() => setMobileDrawerOpen(false)} />
           <aside className="relative w-72 max-w-[85vw] h-full bg-white dark:bg-[#101421] border-r border-[#E8EAF1] dark:border-slate-800 flex flex-col z-10">
-            <div className="h-[68px] px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
-              <div className="flex items-center gap-2">
+            <div className="h-[84px] px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
                 <img
                   src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
                   alt={appName}
-                  className="w-20 h-14 object-contain shrink-0 border-0"
+                  className="w-24 h-[68px] object-contain shrink-0 border-0"
                 />
                 <span className="font-display font-bold text-sm">{appName}</span>
               </div>
