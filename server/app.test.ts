@@ -202,5 +202,80 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
   const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
   assert.match(indexHtml, /https:\/\/telegram-bot-menager\.vercel\.app\/og-preview\.jpg/);
   assert.doesNotMatch(indexHtml, /telegram-bot-manager\.vercel\.app/);
+
+  // 9. Lower-sequence vault containing a newly registered user merges into higher-sequence server & logs in cleanly
+  const { encryptVaultBytes } = await import('./crypto.js');
+  const initSqlJs = (await import('sql.js/dist/sql-wasm-inline.js')).default as unknown as () => Promise<{
+    Database: new () => { exec: (s: string) => void; run: (s: string, p?: unknown[]) => void; export: () => Uint8Array };
+  }>;
+  const SQL = await initSqlJs();
+  const coldDb = new SQL.Database();
+  coldDb.exec(`
+    CREATE TABLE admin_users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', avatar_url TEXT, badge TEXT NOT NULL DEFAULT 'none', is_blocked INTEGER NOT NULL DEFAULT 0, created_ip TEXT, session_version INTEGER NOT NULL DEFAULT 1, recovery_hint TEXT, last_login_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE bots (id INTEGER PRIMARY KEY AUTOINCREMENT, bot_key TEXT NOT NULL UNIQUE, telegram_bot_id INTEGER NOT NULL, name TEXT NOT NULL, username TEXT NOT NULL, short_description TEXT DEFAULT '', description TEXT DEFAULT '', mode TEXT NOT NULL DEFAULT 'live', encrypted_token TEXT NOT NULL, token_fingerprint TEXT NOT NULL UNIQUE, token_masked TEXT NOT NULL, connection_status TEXT NOT NULL DEFAULT 'connected', webhook_status TEXT NOT NULL DEFAULT 'inactive', webhook_url TEXT, webhook_secret_encrypted TEXT, pending_update_count INTEGER NOT NULL DEFAULT 0, last_webhook_error TEXT, can_join_groups INTEGER NOT NULL DEFAULT 1, can_read_all_group_messages INTEGER NOT NULL DEFAULT 0, supports_inline_queries INTEGER NOT NULL DEFAULT 0, last_checked_at TEXT, last_activity_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+  `);
+  const { hashPassword } = await import('./crypto.js');
+  coldDb.run(
+    `INSERT INTO admin_users (username, display_name, password_hash, role, avatar_url) VALUES (?, ?, ?, 'admin', ?)`,
+    ['MIRAZ', 'Miraz', hashPassword('098@098@'), SAMPLE_AVATAR]
+  );
+  coldDb.run(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('__vault_seq', '1')`);
+  coldDb.run(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('__vault_rev', '1:coldrev')`);
+  const coldVault = encryptVaultBytes(coldDb.export());
+
+  const mirazLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-XC-Vault-Rev': '1:coldrev' },
+    body: JSON.stringify({ username: 'MIRAZ', password: '098@098@', rememberMe: true, _vault: coldVault }),
+  });
+  assert.equal(mirazLogin.status, 200);
+  const mirazJson = (await mirazLogin.json()) as { admin: { username: string; role: string } };
+  assert.equal(mirazJson.admin.username, 'MIRAZ');
+  assert.equal(mirazJson.admin.role, 'user');
+
+  // 10. Deleting a bot creates a tombstone so a stale vault snapshot can NEVER bring it back on refresh
+  const addTempBot = await fetch(`${baseUrl}/api/bots`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ token: 'sandbox:temp_delete_verify', name: 'Temp Delete Bot' }),
+  });
+  assert.equal(addTempBot.status, 201);
+  const tempBotJson = (await addTempBot.json()) as {
+    bot: { id: number };
+    _vault?: string;
+    _vaultRev?: string;
+  };
+  const staleVaultWithDeletedBot = tempBotJson._vault || '';
+  const staleRevWithDeletedBot = tempBotJson._vaultRev || '';
+
+  const delBotRes = await fetch(`${baseUrl}/api/bots/${tempBotJson.bot.id}`, {
+    method: 'DELETE',
+    headers: {
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+  });
+  assert.equal(delBotRes.status, 200);
+
+  // Even if a stale browser tab or warm Lambda sends the old vault snapshot containing Temp Delete Bot,
+  // GET /api/bots must NOT resurrect the deleted bot.
+  const refreshAfterDelete = await fetch(`${baseUrl}/api/bots`, {
+    headers: {
+      Cookie: adminCookie,
+      ...(staleVaultWithDeletedBot ? { 'X-XC-Vault': staleVaultWithDeletedBot } : {}),
+      ...(staleRevWithDeletedBot ? { 'X-XC-Vault-Rev': staleRevWithDeletedBot } : {}),
+    },
+  });
+  assert.equal(refreshAfterDelete.status, 200);
+  const refreshBotsJson = (await refreshAfterDelete.json()) as { bots: Array<{ username: string }> };
+  assert.equal(
+    refreshBotsJson.bots.some((b) => b.username === 'temp_delete_verify'),
+    false
+  );
 });
 

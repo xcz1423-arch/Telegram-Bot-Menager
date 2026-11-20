@@ -55,6 +55,8 @@ export function ensureServerlessBootstrap(force = false): void {
   for (let i = 0; i < envBots.length; i++) {
     const entry = envBots[i];
     const fingerprint = hashTokenFingerprint(entry.token);
+    const wasDeleted = db.prepare('SELECT token_fingerprint FROM deleted_bots WHERE token_fingerprint = ?').get(fingerprint);
+    if (wasDeleted) continue;
     const existing = db.prepare('SELECT id FROM bots WHERE token_fingerprint = ?').get(fingerprint);
     if (existing) continue;
 

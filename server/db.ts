@@ -316,6 +316,11 @@ const SCHEMA_SQL = `
     revoked_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS deleted_bots (
+    token_fingerprint TEXT PRIMARY KEY,
+    deleted_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_bot_updates_bot_time ON bot_updates(bot_id, received_at DESC);
   CREATE INDEX IF NOT EXISTS idx_bot_messages_bot_time ON bot_messages(bot_id, sent_at DESC);
   CREATE INDEX IF NOT EXISTS idx_api_logs_bot_time ON api_logs(bot_id, created_at DESC);
@@ -363,6 +368,12 @@ function runSchemaMigrations(driver: DbDriver): void {
   ensureColumn(driver, 'notifications', 'sender_avatar', `TEXT`);
   ensureColumn(driver, 'notifications', 'sender_badge', `TEXT`);
   ensureColumn(driver, 'notifications', 'sender_ip', `TEXT`);
+  driver.exec(`
+    CREATE TABLE IF NOT EXISTS deleted_bots (
+      token_fingerprint TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 interface SqlJsDatabase {
@@ -597,10 +608,18 @@ export function getVaultSeq(): number {
   return currentVaultSeq;
 }
 
+export function parseVaultSeq(rev: string | undefined | null): number {
+  if (!rev || rev === 'init') return 0;
+  const colonIdx = rev.indexOf(':');
+  if (colonIdx <= 0) return 0;
+  const parsed = Number.parseInt(rev.slice(0, colonIdx), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 export function bumpVaultRev(): string {
-  const nextRev = crypto.randomBytes(8).toString('hex');
-  currentVaultRev = nextRev;
   currentVaultSeq = currentVaultSeq + 1;
+  const nextRev = `${currentVaultSeq}:${crypto.randomBytes(8).toString('hex')}`;
+  currentVaultRev = nextRev;
   if (activeDriver) {
     activeDriver
       .prepare(`
@@ -650,10 +669,237 @@ export function exportDatabaseBytes(): Uint8Array | null {
   return exported;
 }
 
+function querySqlJsAll(sqlDb: SqlJsDatabase, sql: string, params: unknown[] = []): Record<string, unknown>[] {
+  const stmt = sqlDb.prepare(sql);
+  const rows: Record<string, unknown>[] = [];
+  try {
+    stmt.bind(normalizeSqlParams(params));
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
+  } finally {
+    stmt.free();
+  }
+  return rows;
+}
+
+function runSqlJs(sqlDb: SqlJsDatabase, sql: string, params: unknown[] = []): number {
+  const stmt = sqlDb.prepare(sql);
+  try {
+    stmt.bind(normalizeSqlParams(params));
+    stmt.step();
+  } finally {
+    stmt.free();
+  }
+  const idRes = sqlDb.exec('SELECT last_insert_rowid()');
+  if (idRes.length > 0 && idRes[0].values.length > 0) {
+    return Number(idRes[0].values[0][0] ?? 0);
+  }
+  return 0;
+}
+
 /**
- * Restores an exported SQLite snapshot only when the incoming snapshot is strictly
- * newer (or when the current instance is at cold-start 'init'). Prevents stale browser
- * tabs/devices from overwriting bots or profile photos saved from another device.
+ * Merges non-deleted user accounts and bots from `sourceDb` into `targetDb` when
+ * concurrent serverless Lambda containers drift so newly registered accounts or
+ * connected bots are never lost behind another container's higher sequence number.
+ */
+function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDatabase): number {
+  let mergedCount = 0;
+
+  try {
+    const deletedSet = new Set<string>();
+    const auditRows = querySqlJsAll(
+      targetDb,
+      `SELECT affected_username FROM admin_audit_logs WHERE action_type = 'ACCOUNT_DELETED' AND affected_username IS NOT NULL`
+    );
+    for (const row of auditRows) {
+      const uname = String(row.affected_username || '').trim().toLowerCase();
+      if (uname) deletedSet.add(uname);
+    }
+
+    const existingUsers = new Set<string>(
+      querySqlJsAll(targetDb, `SELECT username FROM admin_users`).map((u) =>
+        String(u.username || '').trim().toLowerCase()
+      )
+    );
+
+    const srcUsers = querySqlJsAll(
+      sourceDb,
+      `SELECT username, display_name, password_hash, role, avatar_url, badge, is_blocked, created_ip, session_version, recovery_hint, last_login_at, created_at, updated_at FROM admin_users`
+    );
+
+    const hasExistingAdmin =
+      querySqlJsAll(targetDb, `SELECT id FROM admin_users WHERE role = 'admin' LIMIT 1`).length > 0;
+
+    for (const u of srcUsers) {
+      const uname = String(u.username || '').trim();
+      const unameLower = uname.toLowerCase();
+      if (!uname || deletedSet.has(unameLower) || existingUsers.has(unameLower)) continue;
+
+      const resolvedRole =
+        existingUsers.size === 0
+          ? 'admin'
+          : u.role === 'admin' && hasExistingAdmin && srcUsers.length === 1
+          ? 'user'
+          : u.role || 'user';
+
+      runSqlJs(
+        targetDb,
+        `INSERT OR IGNORE INTO admin_users (username, display_name, password_hash, role, avatar_url, badge, is_blocked, created_ip, session_version, recovery_hint, last_login_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uname,
+          u.display_name,
+          u.password_hash,
+          resolvedRole,
+          u.avatar_url ?? null,
+          u.badge || 'none',
+          u.is_blocked ?? 0,
+          u.created_ip ?? null,
+          u.session_version ?? 1,
+          u.recovery_hint ?? null,
+          u.last_login_at ?? null,
+          u.created_at ?? null,
+          u.updated_at ?? null,
+        ]
+      );
+      existingUsers.add(unameLower);
+      mergedCount += 1;
+    }
+
+    try {
+      targetDb.exec(`CREATE TABLE IF NOT EXISTS deleted_bots (token_fingerprint TEXT PRIMARY KEY, deleted_at TEXT NOT NULL DEFAULT (datetime('now')));`);
+      sourceDb.exec(`CREATE TABLE IF NOT EXISTS deleted_bots (token_fingerprint TEXT PRIMARY KEY, deleted_at TEXT NOT NULL DEFAULT (datetime('now')));`);
+    } catch {
+      // ignore
+    }
+
+    const deletedBotsMap = new Map<string, string>();
+    for (const row of querySqlJsAll(targetDb, `SELECT token_fingerprint, deleted_at FROM deleted_bots`)) {
+      const fp = String(row.token_fingerprint || '');
+      if (fp) deletedBotsMap.set(fp, String(row.deleted_at || ''));
+    }
+
+    for (const row of querySqlJsAll(sourceDb, `SELECT token_fingerprint, deleted_at FROM deleted_bots`)) {
+      const fp = String(row.token_fingerprint || '');
+      const srcDelAt = String(row.deleted_at || '');
+      if (!fp) continue;
+
+      const curDelAt = deletedBotsMap.get(fp);
+      const bestDelAt = !curDelAt || srcDelAt > curDelAt ? srcDelAt : curDelAt;
+      deletedBotsMap.set(fp, bestDelAt);
+
+      runSqlJs(
+        targetDb,
+        `INSERT INTO deleted_bots (token_fingerprint, deleted_at) VALUES (?, ?)
+         ON CONFLICT(token_fingerprint) DO UPDATE SET deleted_at = CASE WHEN excluded.deleted_at > deleted_bots.deleted_at THEN excluded.deleted_at ELSE deleted_bots.deleted_at END`,
+        [fp, bestDelAt]
+      );
+
+      // Remove stale bot from targetDb if sourceDb deleted it after targetDb's bot was created
+      const existingTargetBot = querySqlJsAll(
+        targetDb,
+        `SELECT id, created_at FROM bots WHERE token_fingerprint = ?`,
+        [fp]
+      );
+      for (const tb of existingTargetBot) {
+        const tbCreated = String(tb.created_at || '');
+        if (!tbCreated || bestDelAt >= tbCreated) {
+          const tbId = Number(tb.id || 0);
+          runSqlJs(targetDb, `DELETE FROM bots WHERE id = ?`, [tbId]);
+          if (tbId > 0) {
+            runSqlJs(targetDb, `DELETE FROM app_settings WHERE setting_key = ?`, [`bot_avatar_${tbId}`]);
+          }
+          mergedCount += 1;
+        }
+      }
+    }
+
+    const existingBots = new Set<string>(
+      querySqlJsAll(targetDb, `SELECT token_fingerprint FROM bots`).map((b) =>
+        String(b.token_fingerprint || '')
+      )
+    );
+
+    const srcBots = querySqlJsAll(sourceDb, `SELECT * FROM bots`);
+    for (const b of srcBots) {
+      const fp = String(b.token_fingerprint || '');
+      if (!fp || existingBots.has(fp)) continue;
+      const deletedAt = deletedBotsMap.get(fp);
+      const createdAt = String(b.created_at || '');
+      if (deletedAt && (!createdAt || deletedAt >= createdAt)) {
+        continue;
+      }
+
+      const newBotId = runSqlJs(
+        targetDb,
+        `INSERT OR IGNORE INTO bots (
+          bot_key, telegram_bot_id, name, username, short_description, description,
+          mode, encrypted_token, token_fingerprint, token_masked,
+          connection_status, webhook_status, webhook_url, webhook_secret_encrypted,
+          pending_update_count, last_webhook_error, can_join_groups,
+          can_read_all_group_messages, supports_inline_queries,
+          last_checked_at, last_activity_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          b.bot_key,
+          b.telegram_bot_id,
+          b.name,
+          b.username,
+          b.short_description ?? '',
+          b.description ?? '',
+          b.mode ?? 'live',
+          b.encrypted_token,
+          fp,
+          b.token_masked,
+          b.connection_status ?? 'connected',
+          b.webhook_status ?? 'inactive',
+          b.webhook_url ?? null,
+          b.webhook_secret_encrypted ?? null,
+          b.pending_update_count ?? 0,
+          b.last_webhook_error ?? null,
+          b.can_join_groups ?? 1,
+          b.can_read_all_group_messages ?? 0,
+          b.supports_inline_queries ?? 0,
+          b.last_checked_at ?? null,
+          b.last_activity_at ?? null,
+          b.created_at ?? null,
+          b.updated_at ?? null,
+        ]
+      );
+      if (newBotId > 0) {
+        runSqlJs(targetDb, `INSERT OR IGNORE INTO bot_settings (bot_id) VALUES (?)`, [newBotId]);
+        const oldBotId = Number(b.id || 0);
+        if (oldBotId > 0) {
+          const avatarRows = querySqlJsAll(
+            sourceDb,
+            `SELECT setting_value FROM app_settings WHERE setting_key = ?`,
+            [`bot_avatar_${oldBotId}`]
+          );
+          if (avatarRows.length > 0 && avatarRows[0].setting_value) {
+            runSqlJs(
+              targetDb,
+              `INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, datetime('now'))`,
+              [`bot_avatar_${newBotId}`, avatarRows[0].setting_value]
+            );
+          }
+        }
+        existingBots.add(fp);
+        mergedCount += 1;
+      }
+    }
+  } catch {
+    // ignore partial merge failures
+  }
+
+  return mergedCount;
+}
+
+/**
+ * Restores an exported SQLite snapshot when the incoming snapshot is strictly
+ * newer (or when the current instance is at cold-start 'init'), while merging
+ * any missing accounts/bots from concurrent containers so new registrations
+ * never fail with "Invalid username or password."
  */
 export function replaceDatabaseBytes(bytes: Uint8Array, onlyIfNewer = true): boolean {
   if (!activeSqlConstructor || !activeDriver) return false;
@@ -682,7 +928,23 @@ export function replaceDatabaseBytes(bytes: Uint8Array, onlyIfNewer = true): boo
   }
 
   if (onlyIfNewer && currentVaultRev !== 'init' && currentVaultSeq > 0 && incomingSeq <= currentVaultSeq) {
+    if (activeSqlDb) {
+      const merged = mergeMissingAccountsAndBots(activeSqlDb, restored);
+      if (merged > 0) {
+        bumpVaultRev();
+        try {
+          fs.writeFileSync(activeDbFilePath, Buffer.from(activeSqlDb.export()));
+        } catch {
+          // ignore
+        }
+        return true;
+      }
+    }
     return false;
+  }
+
+  if (activeSqlDb && currentVaultRev !== 'init') {
+    mergeMissingAccountsAndBots(restored, activeSqlDb);
   }
 
   activeSqlDb = restored;

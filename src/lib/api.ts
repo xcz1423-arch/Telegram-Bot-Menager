@@ -91,8 +91,14 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
     headers.set('X-XC-Vault-Rev', stored.rev);
   }
 
+  const shouldProactivelyAttachVault =
+    includeVaultPayload ||
+    url === '/api/auth/login' ||
+    url === '/api/auth/register' ||
+    (url.startsWith('/api/bots') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method));
+
   let requestOptions = { ...options };
-  if (includeVaultPayload && stored.vault) {
+  if (shouldProactivelyAttachVault && stored.vault) {
     const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
     if (isMutating) {
       let bodyObj: Record<string, unknown> = {};
@@ -106,7 +112,7 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
       bodyObj._vault = stored.vault;
       requestOptions = { ...options, body: JSON.stringify(bodyObj) };
       headers.set('Content-Type', 'application/json');
-    } else if (stored.vault.length <= 6000) {
+    } else if (stored.vault.length <= 12000) {
       headers.set('X-XC-Vault', stored.vault);
     } else {
       await fetch('/api/vault/sync', {

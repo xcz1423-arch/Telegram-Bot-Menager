@@ -1076,6 +1076,7 @@ apiRouter.post('/bots', async (req, res) => {
     res.status(409).json({ error: `This bot token is already connected (@${dup.username}).` });
     return;
   }
+  db.prepare('DELETE FROM deleted_bots WHERE token_fingerprint = ?').run(fingerprint);
 
   const validation = await validateTokenWithTelegram(rawToken, format.mode);
   if (!validation.ok || !validation.profile) {
@@ -1481,6 +1482,11 @@ apiRouter.delete('/bots/:id', (req, res) => {
     res.status(404).json({ error: 'Bot not found.' });
     return;
   }
+  db.prepare(`
+    INSERT INTO deleted_bots (token_fingerprint, deleted_at)
+    VALUES (?, datetime('now'))
+    ON CONFLICT(token_fingerprint) DO UPDATE SET deleted_at = datetime('now')
+  `).run(bot.token_fingerprint);
   db.prepare('DELETE FROM bots WHERE id = ?').run(bot.id);
   db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
   logActivity({

@@ -10,12 +10,14 @@ import {
   getVaultSeq,
   isServerlessRuntime,
   isSqlJsActive,
+  parseVaultSeq,
   replaceDatabaseBytes,
 } from './db.js';
 import { apiRateLimiter, securityHeaders } from './security.js';
 import { apiRouter } from './routes.js';
 
 let appReadyPromise: Promise<void> | null = null;
+let lastCloudPullAt = 0;
 
 export async function ensureAppReady(): Promise<void> {
   if (!appReadyPromise) {
@@ -23,6 +25,7 @@ export async function ensureAppReady(): Promise<void> {
       await ensureDbReady();
       if (isSqlJsActive() && isCloudSyncConfigured()) {
         const cloudBytes = await pullCloudVault();
+        lastCloudPullAt = Date.now();
         if (cloudBytes) {
           replaceDatabaseBytes(cloudBytes, false);
         }
@@ -34,6 +37,17 @@ export async function ensureAppReady(): Promise<void> {
     });
   }
   await appReadyPromise;
+}
+
+async function syncCloudVaultOnWarmLambda(force: boolean): Promise<void> {
+  if (!isSqlJsActive() || !isCloudSyncConfigured()) return;
+  const now = Date.now();
+  if (!force && now - lastCloudPullAt < 3000) return;
+  lastCloudPullAt = now;
+  const cloudBytes = await pullCloudVault();
+  if (cloudBytes) {
+    replaceDatabaseBytes(cloudBytes, true);
+  }
 }
 
 export function createApp() {
@@ -63,9 +77,9 @@ export function createApp() {
     <meta charset="UTF-8" />
     <title>xᴄ ʙᴏᴛ ᴄᴏɴᴛʀᴏʟ — ᴀᴅᴠᴀɴᴄᴇᴅ ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴄᴏɴsᴏʟᴇ</title>
     <meta name="description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
-    <link rel="icon" href="${origin}/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="192x192" href="${origin}/icon-192.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="${origin}/apple-touch-icon.png" />
+    <link rel="icon" href="${origin}/favicon.ico?v=2" sizes="any" />
+    <link rel="icon" type="image/png" sizes="192x192" href="${origin}/icon-192.png?v=2" />
+    <link rel="apple-touch-icon" sizes="180x180" href="${origin}/apple-touch-icon.png?v=2" />
     <meta property="og:site_name" content="XC BOT CONTROL" />
     <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
     <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
@@ -97,6 +111,13 @@ export function createApp() {
 
       // Synchronize SQLite state across ephemeral Vercel Lambda containers
       if ((isServerlessRuntime() || process.env.XC_FORCE_SQLJS === '1') && isSqlJsActive() && !req.path.startsWith('/webhook/')) {
+        const forceCloudSync =
+          req.path === '/auth/login' ||
+          req.path === '/auth/register' ||
+          req.path === '/auth/status' ||
+          req.path === '/bots';
+        await syncCloudVaultOnWarmLambda(forceCloudSync);
+
         const bodyVault =
           req.body && typeof req.body === 'object' && !Array.isArray(req.body) && typeof (req.body as Record<string, unknown>)._vault === 'string'
             ? String((req.body as Record<string, unknown>)._vault)
@@ -107,6 +128,7 @@ export function createApp() {
         const headerVault = typeof req.headers['x-xc-vault'] === 'string' ? req.headers['x-xc-vault'] : '';
         const incomingVault = bodyVault || headerVault;
         const incomingRev = typeof req.headers['x-xc-vault-rev'] === 'string' ? req.headers['x-xc-vault-rev'] : '';
+        const incomingSeq = parseVaultSeq(incomingRev);
 
         if (incomingVault) {
           if (!incomingRev || incomingRev !== getVaultRev()) {
@@ -117,8 +139,13 @@ export function createApp() {
               res.setHeader('X-XC-Vault-Reset', '1');
             }
           }
-        } else if (incomingRev && incomingRev !== getVaultRev() && getVaultRev() === 'init' && getVaultSeq() === 0) {
-          // Only ask the client to upload its cached vault if the server is at a true cold-start 'init' state
+        } else if (
+          incomingRev &&
+          incomingRev !== getVaultRev() &&
+          ((getVaultRev() === 'init' && getVaultSeq() === 0) ||
+            incomingSeq > getVaultSeq() ||
+            req.path === '/auth/login')
+        ) {
           res.status(409).json({
             code: 'VAULT_SYNC_REQUIRED',
             error: 'Synchronizing workspace state...',
@@ -127,18 +154,22 @@ export function createApp() {
         }
 
         if (req.path === '/vault/sync' && req.method.toUpperCase() === 'POST') {
+          const raw = exportDatabaseBytes();
+          if (raw && isCloudSyncConfigured()) {
+            await Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 2500))]);
+          }
           res.json({ ok: true, rev: getVaultRev() });
           return;
         }
 
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
-        const shouldAttachVaultToStatus =
+        const shouldAttachVaultToRead =
           req.method.toUpperCase() === 'GET' &&
-          req.path === '/auth/status' &&
+          (req.path === '/auth/status' || req.path === '/bots' || req.path === '/dashboard') &&
           getVaultRev() !== 'init' &&
           incomingRev !== getVaultRev();
 
-        if (isMutating || shouldAttachVaultToStatus) {
+        if (isMutating || shouldAttachVaultToRead) {
           const origJson = res.json.bind(res);
           res.json = ((body: unknown) => {
             if (
@@ -166,7 +197,10 @@ export function createApp() {
                   }
                   return origJson(payload);
                 }
-              } else if (shouldAttachVaultToStatus && (body as Record<string, unknown>).authenticated === true) {
+              } else if (
+                shouldAttachVaultToRead &&
+                (req.path !== '/auth/status' || (body as Record<string, unknown>).authenticated === true)
+              ) {
                 const raw = exportDatabaseBytes();
                 if (raw) {
                   const payload = {
