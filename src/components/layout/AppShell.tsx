@@ -334,12 +334,13 @@ export function AppShell({
                   displayName={admin.displayName}
                   username={admin.username}
                   badge={admin.badge}
+                  role={admin.role}
                   size="sm"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold truncate flex items-center gap-1">
                     <span data-no-smallcaps="true" className="truncate">{admin.displayName}</span>
-                    <VerifiedBadgeIcon badge={admin.badge} size="xs" />
+                    <VerifiedBadgeIcon badge={admin.badge} role={admin.role} size="xs" />
                   </div>
                   <div className="text-[10px] font-mono text-[#73798C] dark:text-slate-400 truncate">
                     <span data-no-smallcaps="true">@{admin.username}</span> · {admin.role}
@@ -442,7 +443,14 @@ export function AppShell({
               aria-label={`Switch theme (current: ${theme})`}
               className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
             >
-              {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+              {(theme === 'dark' ||
+                (theme === 'system' &&
+                  typeof window !== 'undefined' &&
+                  window.matchMedia('(prefers-color-scheme: dark)').matches)) ? (
+                <Moon className="w-4 h-4" />
+              ) : (
+                <Sun className="w-4 h-4" />
+              )}
             </button>
 
             {/* Notifications */}
@@ -567,10 +575,11 @@ export function AppShell({
                   displayName={admin.displayName}
                   username={admin.username}
                   badge={admin.badge}
+                  role={admin.role}
                   size="sm"
                 />
                 <span data-no-smallcaps="true" className="text-xs font-medium max-w-[110px] truncate">{admin.displayName}</span>
-                <VerifiedBadgeIcon badge={admin.badge} size="xs" />
+                <VerifiedBadgeIcon badge={admin.badge} role={admin.role} size="xs" />
               </button>
 
               {profileOpen && (
@@ -581,12 +590,13 @@ export function AppShell({
                       displayName={admin.displayName}
                       username={admin.username}
                       badge={admin.badge}
+                      role={admin.role}
                       size="md"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-semibold truncate flex items-center gap-1">
                         <span data-no-smallcaps="true" className="truncate">{admin.displayName}</span>
-                        <VerifiedBadgeIcon badge={admin.badge} size="xs" />
+                        <VerifiedBadgeIcon badge={admin.badge} role={admin.role} size="xs" />
                       </div>
                       <div className="text-[11px] font-mono text-[#73798C] dark:text-slate-400 truncate">
                         <span data-no-smallcaps="true">@{admin.username}</span> · {admin.role === 'admin' ? 'Admin' : 'User'}

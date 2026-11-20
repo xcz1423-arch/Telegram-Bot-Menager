@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Activity,
   Bot,
+  Box,
+  CheckCircle2,
+  AlertTriangle,
   Send,
   Webhook,
   Code2,
@@ -10,9 +14,11 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
+import { formatBangladeshDateTime } from '../../lib/timeFormat';
 import type { AdminUser, BotSummary, NavTab } from '../../types';
 import { ActivityTimelineChart, SuccessRateDonut, TimeSeriesPoint } from '../charts/SvgCharts';
 import { SkeletonRows, StatusBadge } from '../ui/Primitives';
+import { UserAvatar, VerifiedBadgeIcon } from '../ui/VerifiedBadge';
 
 interface DashboardPayload {
   stats: {
@@ -78,7 +84,7 @@ export function DashboardView({
 }) {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [nowLabel, setNowLabel] = useState(() => new Date().toLocaleString());
+  const [nowLabel, setNowLabel] = useState(() => formatBangladeshDateTime(new Date()));
 
   const load = async () => {
     setLoading(true);
@@ -96,7 +102,7 @@ export function DashboardView({
   }, [activeBotId, refreshKey]);
 
   useEffect(() => {
-    const t = setInterval(() => setNowLabel(new Date().toLocaleString()), 30000);
+    const t = setInterval(() => setNowLabel(formatBangladeshDateTime(new Date())), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -116,37 +122,166 @@ export function DashboardView({
   };
 
   const kpiCards = [
-    { label: 'Total Connected Bots', value: stats.totalBots, tone: 'text-[#171A2B] dark:text-white' },
-    { label: 'Active Bots', value: stats.activeBots, tone: 'text-[#118A66] dark:text-[#20C997]' },
-    { label: 'Inactive Bots', value: stats.inactiveBots, tone: 'text-[#9A6807] dark:text-[#F5B942]' },
-    { label: 'Messages Sent', value: stats.totalMessagesSent, tone: 'text-[#6555E8] dark:text-[#988DF9]' },
-    { label: 'Updates Received', value: stats.totalUpdatesReceived, tone: 'text-[#0D8EB8] dark:text-[#22C8F6]' },
-    { label: 'Total API Requests', value: stats.totalApiRequests, tone: 'text-[#171A2B] dark:text-white' },
-    { label: 'Successful Requests', value: stats.successfulApiRequests, tone: 'text-[#118A66] dark:text-[#20C997]' },
-    { label: 'Failed Requests', value: stats.failedApiRequests, tone: 'text-[#C72544] dark:text-[#F05B75]' },
+    {
+      label: 'Total Connected Bots',
+      value: stats.totalBots,
+      tone: 'text-[#171A2B] dark:text-white',
+      icon: (
+        <Bot
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#7C3AED] dark:text-[#8B5CF6] drop-shadow-[0_0_8px_rgba(139,92,246,0.5)]"
+          strokeWidth={2}
+        />
+      ),
+    },
+    {
+      label: 'Active Bots',
+      value: stats.activeBots,
+      tone: 'text-[#118A66] dark:text-[#20C997]',
+      icon: (
+        <Activity
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#118A66] dark:text-[#22C55E] drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]"
+          strokeWidth={2.25}
+        />
+      ),
+    },
+    {
+      label: 'Inactive Bots',
+      value: stats.inactiveBots,
+      tone: 'text-[#D97706] dark:text-[#FBBF24]',
+      icon: (
+        <svg
+          viewBox="0 0 36 36"
+          fill="none"
+          className="w-8 h-8 sm:w-9 sm:h-9 drop-shadow-[0_0_8px_rgba(251,191,36,0.5)]"
+          aria-hidden="true"
+        >
+          <circle cx="18" cy="18" r="14" fill="#FBBF24" />
+          <rect x="13.5" y="12" width="3" height="12" rx="1.5" fill="#151B2B" />
+          <rect x="19.5" y="12" width="3" height="12" rx="1.5" fill="#151B2B" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Messages Sent',
+      value: stats.totalMessagesSent,
+      tone: 'text-[#6555E8] dark:text-[#988DF9]',
+      icon: (
+        <svg
+          viewBox="0 0 36 36"
+          fill="none"
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#7C3AED] dark:text-[#8B5CF6] drop-shadow-[0_0_8px_rgba(139,92,246,0.5)]"
+          aria-hidden="true"
+        >
+          <path
+            d="M9.5 7h17A3.5 3.5 0 0 1 30 10.5v10.5a3.5 3.5 0 0 1-3.5 3.5H15.5l-5.3 4.1a.9.9 0 0 1-1.45-.71V24.4A3.5 3.5 0 0 1 6 21V10.5A3.5 3.5 0 0 1 9.5 7Z"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinejoin="round"
+          />
+          <circle cx="13.5" cy="15.75" r="1.45" fill="currentColor" />
+          <circle cx="18" cy="15.75" r="1.45" fill="currentColor" />
+          <circle cx="22.5" cy="15.75" r="1.45" fill="currentColor" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Updates Received',
+      value: stats.totalUpdatesReceived,
+      tone: 'text-[#0D8EB8] dark:text-[#22C8F6]',
+      icon: (
+        <svg
+          viewBox="0 0 36 36"
+          fill="none"
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#0284C7] dark:text-[#0EA5E9] drop-shadow-[0_0_8px_rgba(14,165,233,0.5)]"
+          aria-hidden="true"
+        >
+          <path
+            d="M11 26h14.5a5.5 5.5 0 0 0 1.1-10.89A7.5 7.5 0 0 0 12.2 12.9 6 6 0 0 0 11 26Z"
+            stroke="currentColor"
+            strokeWidth="2.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M19 15.5l-3 4h4l-2 4.5"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      label: 'Total API Requests',
+      value: stats.totalApiRequests,
+      tone: 'text-[#171A2B] dark:text-white',
+      icon: (
+        <Box
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#171A2B] dark:text-white drop-shadow-[0_0_6px_rgba(255,255,255,0.28)]"
+          strokeWidth={2}
+        />
+      ),
+    },
+    {
+      label: 'Successful Requests',
+      value: stats.successfulApiRequests,
+      tone: 'text-[#118A66] dark:text-[#20C997]',
+      icon: (
+        <CheckCircle2
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#118A66] dark:text-[#20C997] drop-shadow-[0_0_8px_rgba(32,201,151,0.5)]"
+          strokeWidth={2.1}
+        />
+      ),
+    },
+    {
+      label: 'Failed Requests',
+      value: stats.failedApiRequests,
+      tone: 'text-[#C72544] dark:text-[#F05B75]',
+      icon: (
+        <AlertTriangle
+          className="w-8 h-8 sm:w-9 sm:h-9 text-[#C72544] dark:text-[#F05B75] drop-shadow-[0_0_8px_rgba(240,91,117,0.5)]"
+          strokeWidth={2.1}
+        />
+      ),
+    },
   ];
 
   return (
     <div className="space-y-6">
       {/* Welcome & Quick Actions Strip */}
-      <section className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 sm:p-5">
-        <div className="flex items-center gap-3.5 sm:gap-5 min-w-0">
+      <section className="flex flex-col items-center text-center gap-4 bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-5 sm:p-6">
+        <div className="flex flex-col items-center gap-3 min-w-0 w-full">
           <img
             src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
             alt="XC BOT CONTROL"
-            className="w-28 h-[72px] sm:w-40 sm:h-[100px] object-contain shrink-0 border-0"
+            className="w-56 h-36 sm:w-72 sm:h-48 object-contain mx-auto shrink-0 border-0"
           />
-          <div className="min-w-0">
-            <h2 className="text-lg sm:text-xl font-display font-bold tracking-tight">
-              Welcome back, <span data-no-smallcaps="true">{admin.displayName}</span>
-            </h2>
-            <p className="text-xs text-[#73798C] dark:text-slate-400 mt-0.5 font-mono tabular-nums truncate">
-              {nowLabel} · One Dashboard. Complete Bot Control.
+          <div className="flex flex-col items-center gap-2 min-w-0 max-w-full">
+            <UserAvatar
+              avatarUrl={admin.avatarUrl}
+              displayName={admin.displayName}
+              username={admin.username}
+              badge={admin.badge}
+              role={admin.role}
+              size="lg"
+            />
+            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+              <h2 className="text-lg sm:text-xl font-display font-bold tracking-tight">
+                Welcome back, <span data-no-smallcaps="true">{admin.displayName}</span>
+              </h2>
+              <VerifiedBadgeIcon badge={admin.badge} role={admin.role} size="md" />
+            </div>
+            <div className="text-xs font-mono tabular-nums text-[#6555E8] dark:text-[#A599FF] font-semibold">
+              {nowLabel}
+            </div>
+            <p className="text-xs text-[#73798C] dark:text-slate-400">
+              One Dashboard. Complete Bot Control.
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center justify-center gap-2 shrink-0">
           <button
             type="button"
             onClick={onOpenAddBot}
@@ -203,11 +338,18 @@ export function DashboardView({
         {kpiCards.map((k) => (
           <div
             key={k.label}
-            className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4"
+            className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-4 flex items-center gap-3 sm:gap-4"
           >
-            <div className="text-xs text-[#73798C] dark:text-slate-400 truncate">{k.label}</div>
-            <div className={`text-2xl font-display font-bold font-mono tabular-nums mt-1.5 ${k.tone}`}>
-              {k.value.toLocaleString()}
+            <div className="shrink-0 flex items-center justify-center" aria-hidden="true">
+              {k.icon}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] sm:text-xs text-[#73798C] dark:text-slate-400 truncate">
+                {k.label}
+              </div>
+              <div className={`text-2xl font-display font-bold font-mono tabular-nums mt-0.5 leading-tight ${k.tone}`}>
+                {k.value.toLocaleString()}
+              </div>
             </div>
           </div>
         ))}
@@ -288,9 +430,17 @@ export function DashboardView({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div data-no-smallcaps="true" className="w-10 h-10 rounded-xl bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#A599FF] flex items-center justify-center font-display font-bold text-sm shrink-0">
-                      {bot.name.slice(0, 2).toUpperCase()}
-                    </div>
+                    {bot.avatar_url ? (
+                      <img
+                        src={bot.avatar_url}
+                        alt={bot.name}
+                        className="w-10 h-10 rounded-xl object-cover border border-[#E8EAF1] dark:border-slate-700 shrink-0"
+                      />
+                    ) : (
+                      <div data-no-smallcaps="true" className="w-10 h-10 rounded-xl bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#A599FF] flex items-center justify-center font-display font-bold text-sm shrink-0">
+                        {bot.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <div data-no-smallcaps="true" className="text-sm font-semibold truncate">{bot.name}</div>
                       <div className="text-xs font-mono text-[#73798C] dark:text-slate-400 truncate">

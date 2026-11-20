@@ -160,25 +160,47 @@ export function createAdminSession(params: {
   return { rawToken, csrfToken, expiresAt };
 }
 
-export function setSessionCookie(res: Response, rawToken: string, expiresAt: Date): void {
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+function isHttpsRequest(req?: Request): boolean {
+  if (process.env.VERCEL) return true;
+  if (!req) return process.env.NODE_ENV === 'production';
+  const fwdProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (fwdProto === 'https') return true;
+  if (req.secure) return true;
+  return false;
+}
+
+export function extractSessionToken(req: Request): string | null {
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies[SESSION_COOKIE_NAME]) {
+    return cookies[SESSION_COOKIE_NAME];
+  }
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token) return token;
+  }
+  return null;
+}
+
+export function setSessionCookie(res: Response, rawToken: string, expiresAt: Date, req?: Request): void {
+  const useSecureNone = isHttpsRequest(req);
   const parts = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(rawToken)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    useSecureNone ? 'SameSite=None' : 'SameSite=Lax',
     `Expires=${expiresAt.toUTCString()}`,
   ];
-  if (isProd) {
+  if (useSecureNone) {
     parts.push('Secure');
   }
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
-export function clearSessionCookie(res: Response): void {
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-  const secureFlag = isProd ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`);
+export function clearSessionCookie(res: Response, req?: Request): void {
+  const useSecureNone = isHttpsRequest(req);
+  const sameSite = useSecureNone ? 'SameSite=None; Secure' : 'SameSite=Lax';
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; ${sameSite}; Max-Age=0`);
 }
 
 export interface ResolvedSession {
@@ -197,8 +219,7 @@ export interface ResolvedSession {
 }
 
 export function resolveSessionFromRequest(req: Request): { session: ResolvedSession | null; hadCookie: boolean; blocked?: boolean } {
-  const cookies = parseCookies(req.headers.cookie);
-  const rawToken = cookies[SESSION_COOKIE_NAME];
+  const rawToken = extractSessionToken(req);
   if (!rawToken) {
     return { session: null, hadCookie: false };
   }
@@ -327,7 +348,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const { session, hadCookie, blocked } = resolveSessionFromRequest(req);
   if (!session) {
     if (hadCookie) {
-      clearSessionCookie(res);
+      clearSessionCookie(res, req);
       if (blocked) {
         res.status(403).json({ error: 'Your account has been blocked by the administrator.' });
         return;

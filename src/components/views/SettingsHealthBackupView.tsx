@@ -178,6 +178,10 @@ export function SettingsHealthBackupView({
   };
 
   useEffect(() => {
+    if (!isAdmin && (subTab === 'users' || subTab === 'backup')) {
+      setSubTab('profile');
+      return;
+    }
     if (subTab === 'users' && isAdmin) {
       loadAdminUsersAndAudit();
     } else if (subTab === 'security') {
@@ -371,7 +375,7 @@ export function SettingsHealthBackupView({
     { id: 'settings' as const, label: 'Preferences', icon: Settings },
     { id: 'security' as const, label: 'Security', icon: Shield },
     { id: 'health' as const, label: 'System Health', icon: Activity },
-    { id: 'backup' as const, label: 'Backup & Restore', icon: Database },
+    ...(isAdmin ? [{ id: 'backup' as const, label: 'Backup & Restore', icon: Database }] : []),
   ];
 
   return (
@@ -407,12 +411,13 @@ export function SettingsHealthBackupView({
                 displayName={profileName || admin.displayName}
                 username={admin.username}
                 badge={profileBadge}
+                role={admin.role}
                 size="lg"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span data-no-smallcaps="true" className="font-display font-bold text-base truncate">{profileName || admin.displayName}</span>
-                  <VerifiedBadgeIcon badge={profileBadge} showLabel size="sm" />
+                  <VerifiedBadgeIcon badge={profileBadge} role={admin.role} showLabel size="sm" />
                 </div>
                 <div data-no-smallcaps="true" className="text-xs font-mono text-[#73798C] dark:text-slate-400 mt-0.5">
                   @{admin.username}
@@ -448,6 +453,7 @@ export function SettingsHealthBackupView({
                 displayName={profileName || admin.displayName}
                 username={admin.username}
                 badge={profileBadge}
+                role={admin.role}
                 size="lg"
               />
               <div className="flex flex-wrap gap-2">
@@ -661,12 +667,13 @@ export function SettingsHealthBackupView({
                         displayName={u.displayName}
                         username={u.username}
                         badge={u.badge}
+                        role={u.role}
                         size="md"
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span data-no-smallcaps="true" className="text-xs font-semibold truncate">{u.displayName}</span>
-                          <VerifiedBadgeIcon badge={u.badge} size="xs" />
+                          <VerifiedBadgeIcon badge={u.badge} role={u.role} size="xs" />
                           <span data-no-smallcaps="true" className="text-[11px] font-mono text-[#73798C] dark:text-slate-400">@{u.username}</span>
                           {isSelf && <StatusBadge status="accent" label="You" />}
                         </div>
@@ -1153,7 +1160,7 @@ export function SettingsHealthBackupView({
         </div>
       )}
 
-      {subTab === 'backup' && (
+      {subTab === 'backup' && isAdmin && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-5 space-y-4">
             <h3 className="text-sm font-semibold">Export Console Backup</h3>

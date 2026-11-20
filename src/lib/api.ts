@@ -1,4 +1,12 @@
 let csrfToken = '';
+let sessionTokenFallback = '';
+const SESSION_FALLBACK_KEY = 'xc_session_token';
+
+try {
+  sessionTokenFallback = sessionStorage.getItem(SESSION_FALLBACK_KEY) || '';
+} catch {
+  sessionTokenFallback = '';
+}
 
 export function setCsrfToken(token: string) {
   csrfToken = token;
@@ -6,6 +14,19 @@ export function setCsrfToken(token: string) {
 
 export function getCsrfToken(): string {
   return csrfToken;
+}
+
+export function setSessionToken(token: string) {
+  sessionTokenFallback = token;
+  try {
+    if (token) {
+      sessionStorage.setItem(SESSION_FALLBACK_KEY, token);
+    } else {
+      sessionStorage.removeItem(SESSION_FALLBACK_KEY);
+    }
+  } catch {
+    // ignore storage access issues
+  }
 }
 
 export class ApiError extends Error {
@@ -61,6 +82,9 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrfToken) {
     headers.set('X-CSRF-Token', csrfToken);
   }
+  if (sessionTokenFallback && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${sessionTokenFallback}`);
+  }
 
   const stored = readVault();
   if (stored.rev) {
@@ -90,6 +114,7 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
         headers: {
           'Content-Type': 'application/json',
           ...(stored.rev ? { 'X-XC-Vault-Rev': stored.rev } : {}),
+          ...(sessionTokenFallback ? { Authorization: `Bearer ${sessionTokenFallback}` } : {}),
         },
         body: JSON.stringify({ _vault: stored.vault }),
         credentials: 'include',
@@ -122,10 +147,17 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
   }
 
   if (!res.ok) {
+    if (res.status === 401 && url !== '/api/auth/login') {
+      setSessionToken('');
+    }
     const errMsg = typeof json.error === 'string' ? json.error : `Request failed (${res.status})`;
     const errCode = typeof json.code === 'string' ? json.code : undefined;
     const errConflict = typeof json.conflict === 'string' ? json.conflict : undefined;
     throw new ApiError(errMsg, res.status, errCode, errConflict);
+  }
+
+  if (typeof json.sessionToken === 'string' && json.sessionToken) {
+    setSessionToken(json.sessionToken);
   }
 
   if (typeof json._vault === 'string' && typeof json._vaultRev === 'string') {

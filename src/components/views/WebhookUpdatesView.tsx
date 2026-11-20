@@ -31,8 +31,8 @@ export function WebhookUpdatesView({
 }) {
   const bot = bots.find((b) => b.id === activeBotId) || bots[0] || null;
 
-  const [tab, setTab] = useState<'updates' | 'webhook'>(bot ? 'updates' : 'webhook');
-  const [sourceMode, setSourceMode] = useState<'connected' | 'direct'>(bot ? 'connected' : 'direct');
+  const [tab, setTab] = useState<'updates' | 'webhook'>('webhook');
+  const [sourceMode, setSourceMode] = useState<'connected' | 'direct'>('direct');
   const [updates, setUpdates] = useState<BotUpdate[]>([]);
   const [updateTotal, setUpdateTotal] = useState(0);
   const [updateFilter, setUpdateFilter] = useState('all');
@@ -320,6 +320,18 @@ export function WebhookUpdatesView({
               </div>
 
               <div className="flex items-center gap-1 p-1 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setSourceMode('direct')}
+                  className={`px-3 py-1.5 min-h-[32px] text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 ${
+                    sourceMode === 'direct'
+                      ? 'bg-white dark:bg-[#151B2B] text-[#171A2B] dark:text-white shadow-xs'
+                      : 'text-[#73798C] dark:text-slate-400'
+                  }`}
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span>Host URL & Token</span>
+                </button>
                 {bot && (
                   <button
                     type="button"
@@ -333,18 +345,6 @@ export function WebhookUpdatesView({
                     Connected Bot
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setSourceMode('direct')}
-                  className={`px-3 py-1.5 min-h-[32px] text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 ${
-                    sourceMode === 'direct'
-                      ? 'bg-white dark:bg-[#151B2B] text-[#171A2B] dark:text-white shadow-xs'
-                      : 'text-[#73798C] dark:text-slate-400'
-                  }`}
-                >
-                  <Link2 className="w-3.5 h-3.5" />
-                  <span>Host URL & Token</span>
-                </button>
               </div>
             </div>
 
@@ -417,7 +417,8 @@ export function WebhookUpdatesView({
                   </label>
                   <input
                     id="direct-webhook-url"
-                    type="url"
+                    type="text"
+                    inputMode="url"
                     required
                     value={directUrl}
                     onChange={(e) => setDirectUrl(e.target.value)}

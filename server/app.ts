@@ -1,11 +1,13 @@
 import express from 'express';
 import { ensureServerlessBootstrap } from './bootstrap.js';
+import { isCloudSyncConfigured, pullCloudVault, pushCloudVault } from './cloudSync.js';
 import { decryptVaultBytes, encryptVaultBytes } from './crypto.js';
 import {
   bumpVaultRev,
   ensureDbReady,
   exportDatabaseBytes,
   getVaultRev,
+  getVaultSeq,
   isServerlessRuntime,
   isSqlJsActive,
   replaceDatabaseBytes,
@@ -19,6 +21,12 @@ export async function ensureAppReady(): Promise<void> {
   if (!appReadyPromise) {
     appReadyPromise = (async () => {
       await ensureDbReady();
+      if (isSqlJsActive() && isCloudSyncConfigured()) {
+        const cloudBytes = await pullCloudVault();
+        if (cloudBytes) {
+          replaceDatabaseBytes(cloudBytes, false);
+        }
+      }
       ensureServerlessBootstrap();
     })().catch((err) => {
       appReadyPromise = null;
@@ -59,8 +67,10 @@ export function createApp() {
     <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
     <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
     <meta property="og:type" content="website" />
+    <link rel="image_src" href="${ogImage}" />
     <meta property="og:url" content="${origin}/" />
     <meta property="og:image" content="${ogImage}" />
+    <meta property="og:image:url" content="${ogImage}" />
     <meta property="og:image:secure_url" content="${ogImage}" />
     <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
@@ -98,12 +108,13 @@ export function createApp() {
           if (!incomingRev || incomingRev !== getVaultRev()) {
             try {
               const rawBytes = decryptVaultBytes(incomingVault);
-              replaceDatabaseBytes(rawBytes);
+              replaceDatabaseBytes(rawBytes, true);
             } catch {
               res.setHeader('X-XC-Vault-Reset', '1');
             }
           }
-        } else if (incomingRev && incomingRev !== getVaultRev()) {
+        } else if (incomingRev && incomingRev !== getVaultRev() && getVaultRev() === 'init' && getVaultSeq() === 0) {
+          // Only ask the client to upload its cached vault if the server is at a true cold-start 'init' state
           res.status(409).json({
             code: 'VAULT_SYNC_REQUIRED',
             error: 'Synchronizing workspace state...',
@@ -117,7 +128,13 @@ export function createApp() {
         }
 
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
-        if (isMutating) {
+        const shouldAttachVaultToStatus =
+          req.method.toUpperCase() === 'GET' &&
+          req.path === '/auth/status' &&
+          getVaultRev() !== 'init' &&
+          incomingRev !== getVaultRev();
+
+        if (isMutating || shouldAttachVaultToStatus) {
           const origJson = res.json.bind(res);
           res.json = ((body: unknown) => {
             if (
@@ -128,15 +145,33 @@ export function createApp() {
               req.path !== '/auth/logout' &&
               req.path !== '/vault/sync'
             ) {
-              const nextRev = bumpVaultRev();
-              const raw = exportDatabaseBytes();
-              if (raw) {
-                const payload = {
-                  ...(body as Record<string, unknown>),
-                  _vault: encryptVaultBytes(raw),
-                  _vaultRev: nextRev,
-                };
-                return origJson(payload);
+              if (isMutating) {
+                const nextRev = bumpVaultRev();
+                const raw = exportDatabaseBytes();
+                if (raw) {
+                  const payload = {
+                    ...(body as Record<string, unknown>),
+                    _vault: encryptVaultBytes(raw),
+                    _vaultRev: nextRev,
+                  };
+                  if (isCloudSyncConfigured()) {
+                    void Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 2500))]).finally(() => {
+                      origJson(payload);
+                    });
+                    return res;
+                  }
+                  return origJson(payload);
+                }
+              } else if (shouldAttachVaultToStatus && (body as Record<string, unknown>).authenticated === true) {
+                const raw = exportDatabaseBytes();
+                if (raw) {
+                  const payload = {
+                    ...(body as Record<string, unknown>),
+                    _vault: encryptVaultBytes(raw),
+                    _vaultRev: getVaultRev(),
+                  };
+                  return origJson(payload);
+                }
               }
             }
             return origJson(body);

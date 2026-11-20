@@ -156,7 +156,7 @@ export function AuthGate({
           aria-label="Toggle theme"
           className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-white dark:bg-[#151B2B] text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
         >
-          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
         </button>
       </div>
 

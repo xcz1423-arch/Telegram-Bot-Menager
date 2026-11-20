@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch, setCsrfToken } from './lib/api';
+import { ApiError, apiFetch, setCsrfToken, setSessionToken } from './lib/api';
 import type { AdminUser, BotSummary, NavTab, NotificationItem, ThemeMode, ToastMessage } from './types';
 import { AuthGate } from './components/auth/AuthGate';
 import { AppShell } from './components/layout/AppShell';
@@ -146,20 +146,33 @@ export default function App() {
   };
 
   const loadWorkspaceData = useCallback(async () => {
-    try {
-      const [botsRes, notifRes, settingsRes] = await Promise.all([
-        apiFetch<{ bots: BotSummary[] }>('/api/bots'),
-        apiFetch<{ notifications: NotificationItem[]; unread: number }>('/api/notifications'),
-        apiFetch<{ app_name: string }>('/api/settings'),
-      ]);
-      setBots(botsRes.bots);
-      setNotifications(notifRes.notifications);
-      setUnreadCount(notifRes.unread);
-      if (settingsRes.app_name) setAppName(settingsRes.app_name);
-      setRefreshKey((k) => k + 1);
-    } catch {
-      // handled by auth gate if session expired
+    const [botsResult, notifResult, settingsResult] = await Promise.allSettled([
+      apiFetch<{ bots: BotSummary[] }>('/api/bots'),
+      apiFetch<{ notifications: NotificationItem[]; unread: number }>('/api/notifications'),
+      apiFetch<{ app_name: string }>('/api/settings'),
+    ]);
+
+    const unauthorized = [botsResult, notifResult, settingsResult].some(
+      (r) => r.status === 'rejected' && r.reason instanceof ApiError && r.reason.status === 401
+    );
+    if (unauthorized) {
+      setSessionToken('');
+      setCsrfToken('');
+      setAdmin(null);
+      return;
     }
+
+    if (botsResult.status === 'fulfilled') {
+      setBots(botsResult.value.bots);
+    }
+    if (notifResult.status === 'fulfilled') {
+      setNotifications(notifResult.value.notifications);
+      setUnreadCount(notifResult.value.unread);
+    }
+    if (settingsResult.status === 'fulfilled' && settingsResult.value.app_name) {
+      setAppName(settingsResult.value.app_name);
+    }
+    setRefreshKey((k) => k + 1);
   }, []);
 
   useEffect(() => {
@@ -223,6 +236,7 @@ export default function App() {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
     } finally {
+      setSessionToken('');
       setCsrfToken('');
       setAdmin(null);
       setSetupRequired(false);

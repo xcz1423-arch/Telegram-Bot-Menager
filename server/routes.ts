@@ -30,17 +30,17 @@ import {
   checkLoginRateLimit,
   clearSessionCookie,
   createAdminSession,
+  extractSessionToken,
   getClientIp,
-  parseCookies,
   recordLoginAttempt,
   requireAdmin,
   requireAuth,
   resolveSessionFromRequest,
   revokeSessionTokenHash,
-  SESSION_COOKIE_NAME,
   setSessionCookie,
   hashSessionToken,
 } from './security.js';
+import { getCloudSyncProvider } from './cloudSync.js';
 import { getSuggestedWebhookBaseUrl } from './serverless.js';
 import { seedDemoWorkspace } from './seed.js';
 import {
@@ -160,7 +160,7 @@ apiRouter.get('/auth/status', (req, res) => {
 
   if (!session) {
     if (hadCookie) {
-      clearSessionCookie(res);
+      clearSessionCookie(res, req);
     }
     res.json({
       setupRequired: adminCount === 0,
@@ -242,7 +242,7 @@ apiRouter.post('/auth/setup', (req, res) => {
     ipAddress: ip,
     userAgent: String(req.headers['user-agent'] || 'Unknown'),
   });
-  setSessionCookie(res, session.rawToken, session.expiresAt);
+  setSessionCookie(res, session.rawToken, session.expiresAt, req);
 
   db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login', 1, ?, ?, 'Initial setup')`).run(
     userId,
@@ -261,6 +261,7 @@ apiRouter.post('/auth/setup', (req, res) => {
   res.status(201).json({
     ok: true,
     csrfToken: session.csrfToken,
+    sessionToken: session.rawToken,
     admin: {
       id: userId,
       username,
@@ -336,7 +337,7 @@ apiRouter.post('/auth/register', (req, res) => {
     ipAddress: ip,
     userAgent: String(req.headers['user-agent'] || 'Unknown'),
   });
-  setSessionCookie(res, session.rawToken, session.expiresAt);
+  setSessionCookie(res, session.rawToken, session.expiresAt, req);
 
   db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'login', 1, ?, ?, 'Account created')`).run(
     userId,
@@ -370,6 +371,7 @@ apiRouter.post('/auth/register', (req, res) => {
   res.status(201).json({
     ok: true,
     csrfToken: session.csrfToken,
+    sessionToken: session.rawToken,
     admin: {
       id: userId,
       username,
@@ -434,11 +436,12 @@ apiRouter.post('/auth/autostart', (req, res) => {
     ipAddress: getClientIp(req),
     userAgent: String(req.headers['user-agent'] || 'Unknown'),
   });
-  setSessionCookie(res, session.rawToken, session.expiresAt);
+  setSessionCookie(res, session.rawToken, session.expiresAt, req);
 
   res.json({
     ok: true,
     csrfToken: session.csrfToken,
+    sessionToken: session.rawToken,
     admin: formatUserForClient(admin),
   });
 });
@@ -523,7 +526,7 @@ apiRouter.post('/auth/login', (req, res) => {
     ipAddress: ip,
     userAgent: ua,
   });
-  setSessionCookie(res, session.rawToken, session.expiresAt);
+  setSessionCookie(res, session.rawToken, session.expiresAt, req);
 
   const deviceSummary = formatDeviceSummary(ua);
   pushNotification({
@@ -550,6 +553,7 @@ apiRouter.post('/auth/login', (req, res) => {
   res.json({
     ok: true,
     csrfToken: session.csrfToken,
+    sessionToken: session.rawToken,
     admin: formatUserForClient(user),
   });
 });
@@ -602,8 +606,7 @@ apiRouter.post('/auth/recover', (req, res) => {
 apiRouter.use(requireAuth);
 
 apiRouter.post('/auth/logout', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const rawToken = cookies[SESSION_COOKIE_NAME];
+  const rawToken = extractSessionToken(req);
   const ip = getClientIp(req);
   const ua = String(req.headers['user-agent'] || 'Unknown').slice(0, 200);
   if (rawToken) {
@@ -614,7 +617,7 @@ apiRouter.post('/auth/logout', (req, res) => {
     revokeSessionTokenHash(tokenHash, existingSession?.expires_at);
     db.prepare('DELETE FROM admin_sessions WHERE session_token_hash = ?').run(tokenHash);
   }
-  clearSessionCookie(res);
+  clearSessionCookie(res, req);
   db.prepare(`INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason) VALUES (?, ?, 'logout', 1, ?, ?, 'Signed out')`).run(
     req.auth?.userId ?? null,
     req.auth?.username || 'user',
@@ -823,7 +826,7 @@ apiRouter.post('/auth/sessions/revoke-others', (req, res) => {
     ipAddress: ip,
     userAgent: ua,
   });
-  setSessionCookie(res, fresh.rawToken, fresh.expiresAt);
+  setSessionCookie(res, fresh.rawToken, fresh.expiresAt, req);
 
   db.prepare(`
     INSERT INTO login_history (user_id, username, event_type, success, ip_address, user_agent, reason)
@@ -848,6 +851,7 @@ apiRouter.post('/auth/sessions/revoke-others', (req, res) => {
     ok: true,
     revokedCount,
     csrfToken: fresh.csrfToken,
+    sessionToken: fresh.rawToken,
   });
 });
 
@@ -2880,10 +2884,15 @@ apiRouter.get('/system/health', (req, res) => {
 
   const proto = req.headers['x-forwarded-proto'] || req.protocol;
   const serverless = isServerlessRuntime();
+  const cloudProvider = getCloudSyncProvider();
   res.json({
     runtime: `Node.js ${process.version}`,
     deploymentMode: serverless ? 'Vercel Serverless' : 'Node.js Server',
-    storageMode: serverless ? 'Serverless /tmp SQLite + Env Bootstrap' : 'Persistent Local SQLite',
+    storageMode: cloudProvider
+      ? `Synced Cloud SQLite (${cloudProvider})`
+      : serverless
+      ? 'Serverless /tmp SQLite + Env Bootstrap'
+      : 'Persistent Local SQLite',
     explicitMasterKeyConfigured: hasExplicitMasterKey(),
     databaseEngine: getDbEngineName(),
     databaseConnected: true,
@@ -2896,7 +2905,7 @@ apiRouter.get('/system/health', (req, res) => {
   });
 });
 
-apiRouter.get('/backup/export', (req, res) => {
+apiRouter.get('/backup/export', requireAdmin, (req, res) => {
   // Never export raw tokens or decrypted secrets! Export sanitized bot metadata + settings + commands + templates + saved requests.
   const bots = (db.prepare('SELECT * FROM bots').all() as unknown as BotRecord[]).map((b) => sanitizeBotForClient(b));
   const botSettings = db.prepare('SELECT * FROM bot_settings').all();
@@ -2936,7 +2945,7 @@ apiRouter.get('/backup/export', (req, res) => {
   res.send(JSON.stringify(payload, null, 2));
 });
 
-apiRouter.get('/backup/sql-schema', (_req, res) => {
+apiRouter.get('/backup/sql-schema', requireAdmin, (_req, res) => {
   const schemaPath = path.resolve(process.cwd(), 'database', 'schema.sql');
   if (!fs.existsSync(schemaPath)) {
     res.status(404).json({ error: 'Schema file not found.' });
@@ -2947,7 +2956,7 @@ apiRouter.get('/backup/sql-schema', (_req, res) => {
   res.sendFile(schemaPath);
 });
 
-apiRouter.post('/backup/restore', (req, res) => {
+apiRouter.post('/backup/restore', requireAdmin, (req, res) => {
   const body = req.body;
   if (!body || typeof body !== 'object' || !body.checksum || !body.data) {
     res.status(400).json({ error: 'Invalid backup structure. Expected { checksum, data }.' });

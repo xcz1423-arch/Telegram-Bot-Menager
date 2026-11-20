@@ -387,6 +387,7 @@ let activeSqlConstructor: SqlJsStatic | null = null;
 let activeSqlDb: SqlJsDatabase | null = null;
 let activeDbFilePath = DB_PATH;
 let currentVaultRev = 'init';
+let currentVaultSeq = 0;
 let initPromise: Promise<void> | null = null;
 
 function ensureDirWritable(dir: string): string {
@@ -572,6 +573,10 @@ export async function ensureDbReady(): Promise<void> {
         .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
         .get('__vault_rev') as { setting_value: string } | undefined;
       currentVaultRev = revRow?.setting_value || 'init';
+      const seqRow = activeDriver
+        .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
+        .get('__vault_seq') as { setting_value: string } | undefined;
+      currentVaultSeq = Math.max(0, Number.parseInt(seqRow?.setting_value || '0', 10) || 0);
     })().catch((err) => {
       initPromise = null;
       throw err;
@@ -588,9 +593,14 @@ export function getVaultRev(): string {
   return currentVaultRev;
 }
 
+export function getVaultSeq(): number {
+  return currentVaultSeq;
+}
+
 export function bumpVaultRev(): string {
   const nextRev = crypto.randomBytes(8).toString('hex');
   currentVaultRev = nextRev;
+  currentVaultSeq = currentVaultSeq + 1;
   if (activeDriver) {
     activeDriver
       .prepare(`
@@ -599,6 +609,13 @@ export function bumpVaultRev(): string {
         ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')
       `)
       .run(nextRev);
+    activeDriver
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES ('__vault_seq', ?, datetime('now'))
+        ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')
+      `)
+      .run(String(currentVaultSeq));
   }
   return nextRev;
 }
@@ -611,7 +628,7 @@ export function exportDatabaseBytes(): Uint8Array | null {
     // ignore
   }
   let exported = activeSqlDb.export();
-  if (exported.length > 28_000) {
+  if (exported.length > 48_000) {
     // Keep serverless synced snapshot compact so HTTP requests stay fast and reliable
     const logTables = ['api_logs', 'webhook_logs', 'activity_logs', 'login_history', 'notifications', 'bot_updates', 'bot_messages'];
     for (const tbl of logTables) {
@@ -633,24 +650,53 @@ export function exportDatabaseBytes(): Uint8Array | null {
   return exported;
 }
 
-export function replaceDatabaseBytes(bytes: Uint8Array): void {
-  if (!activeSqlConstructor || !activeDriver) return;
+/**
+ * Restores an exported SQLite snapshot only when the incoming snapshot is strictly
+ * newer (or when the current instance is at cold-start 'init'). Prevents stale browser
+ * tabs/devices from overwriting bots or profile photos saved from another device.
+ */
+export function replaceDatabaseBytes(bytes: Uint8Array, onlyIfNewer = true): boolean {
+  if (!activeSqlConstructor || !activeDriver) return false;
   const restored = new activeSqlConstructor.Database(bytes);
   restored.exec('PRAGMA foreign_keys = ON;');
   restored.exec(SCHEMA_SQL);
+
+  let incomingRev = 'init';
+  let incomingSeq = 0;
+  try {
+    const revStmt = restored.prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?');
+    revStmt.bind(['__vault_rev']);
+    if (revStmt.step()) {
+      incomingRev = String(revStmt.getAsObject().setting_value || 'init');
+    }
+    revStmt.free();
+
+    const seqStmt = restored.prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?');
+    seqStmt.bind(['__vault_seq']);
+    if (seqStmt.step()) {
+      incomingSeq = Math.max(0, Number.parseInt(String(seqStmt.getAsObject().setting_value || '0'), 10) || 0);
+    }
+    seqStmt.free();
+  } catch {
+    // ignore
+  }
+
+  if (onlyIfNewer && currentVaultRev !== 'init' && currentVaultSeq > 0 && incomingSeq <= currentVaultSeq) {
+    return false;
+  }
+
   activeSqlDb = restored;
   runSchemaMigrations(activeDriver);
 
-  const revRow = activeDriver
-    .prepare('SELECT setting_value FROM app_settings WHERE setting_key = ?')
-    .get('__vault_rev') as { setting_value: string } | undefined;
-  currentVaultRev = revRow?.setting_value || 'init';
+  currentVaultRev = incomingRev;
+  currentVaultSeq = incomingSeq;
 
   try {
     fs.writeFileSync(activeDbFilePath, Buffer.from(restored.export()));
   } catch {
     // ignore disk write issues in memory-only fallback
   }
+  return true;
 }
 
 function getActiveDriver(): DbDriver {
