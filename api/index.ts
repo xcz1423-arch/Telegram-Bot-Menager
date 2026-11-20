@@ -11,6 +11,8 @@ const app = createApp();
 export default function handler(req: Request, res: Response) {
   if (!req.url) {
     req.url = '/api';
+  } else if (req.url.includes('__og=1')) {
+    req.url = '/api/og-html';
   } else if (!req.url.startsWith('/api')) {
     req.url = `/api${req.url === '/' ? '' : req.url}`;
   }

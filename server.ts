@@ -28,7 +28,7 @@ async function startServer() {
     app.use((req, res, next) => {
       const ua = String(req.headers['user-agent'] || '');
       const isSocialCrawler =
-        /(Telegram|Twitterbot|WhatsApp|Discordbot|facebookexternalhit|Slackbot|LinkedInBot|WebpageBot|vkShare|SkypeUriPreview)/i.test(
+        /(Telegram|Twitterbot|WhatsApp|Discordbot|facebookexternalhit|Facebot|meta-externalagent|Slackbot|LinkedInBot|WebpageBot|vkShare|SkypeUriPreview|Applebot|Viber|Line|Pinterest|Snapchat|Embedly|Iframely)/i.test(
           ua
         );
       if (req.method === 'GET' && isSocialCrawler && !req.path.startsWith('/api') && fs.existsSync(rootIndex)) {
@@ -36,7 +36,9 @@ async function startServer() {
         const origin = resolveOrigin(req);
         if (origin) {
           html = html
+            .replaceAll('https://telegram-bot-menager.vercel.app/og-preview.jpg', `${origin}/og-preview.jpg`)
             .replaceAll('https://telegram-bot-manager.vercel.app/og-preview.jpg', `${origin}/og-preview.jpg`)
+            .replaceAll('https://telegram-bot-menager.vercel.app/', `${origin}${req.originalUrl}`)
             .replaceAll('https://telegram-bot-manager.vercel.app/', `${origin}${req.originalUrl}`);
         }
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -61,8 +63,16 @@ async function startServer() {
         if (origin) {
           html = html
             .replaceAll(
+              'https://telegram-bot-menager.vercel.app/og-preview.jpg',
+              `${origin}/og-preview.jpg`
+            )
+            .replaceAll(
               'https://telegram-bot-manager.vercel.app/og-preview.jpg',
               `${origin}/og-preview.jpg`
+            )
+            .replaceAll(
+              'content="https://telegram-bot-menager.vercel.app/"',
+              `content="${origin}${req.originalUrl}"`
             )
             .replaceAll(
               'content="https://telegram-bot-manager.vercel.app/"',

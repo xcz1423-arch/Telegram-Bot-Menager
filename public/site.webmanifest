@@ -1,0 +1,23 @@
+{
+  "name": "XC BOT CONTROL — Advanced Developer Console",
+  "short_name": "XC BOT CONTROL",
+  "description": "One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090B14",
+  "theme_color": "#090B14",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

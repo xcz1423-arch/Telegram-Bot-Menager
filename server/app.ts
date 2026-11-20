@@ -49,7 +49,7 @@ export function createApp() {
         .trim()
         .replace(/[^a-z]/gi, '') || 'https';
     const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
-    const rawHost = (forwardedHost || String(req.get('host') || 'telegram-bot-manager.vercel.app')).replace(
+    const rawHost = (forwardedHost || String(req.get('host') || 'telegram-bot-menager.vercel.app')).replace(
       /[^a-zA-Z0-9.:-]/g,
       ''
     );
@@ -63,6 +63,9 @@ export function createApp() {
     <meta charset="UTF-8" />
     <title>xᴄ ʙᴏᴛ ᴄᴏɴᴛʀᴏʟ — ᴀᴅᴠᴀɴᴄᴇᴅ ᴅᴇᴠᴇʟᴏᴘᴇʀ ᴄᴏɴsᴏʟᴇ</title>
     <meta name="description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
+    <link rel="icon" href="${origin}/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="192x192" href="${origin}/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="${origin}/apple-touch-icon.png" />
     <meta property="og:site_name" content="XC BOT CONTROL" />
     <meta property="og:title" content="XC BOT CONTROL — Advanced Developer Console" />
     <meta property="og:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
@@ -80,6 +83,7 @@ export function createApp() {
     <meta name="twitter:title" content="XC BOT CONTROL — Advanced Developer Console" />
     <meta name="twitter:description" content="One Dashboard. Complete Bot Control. Advanced Developer Console for managing multiple Telegram bots, webhooks, API explorer, and analytics." />
     <meta name="twitter:image" content="${ogImage}" />
+    <meta name="twitter:image:alt" content="XC BOT CONTROL Logo" />
   </head>
   <body>
     <p>XC BOT CONTROL — Advanced Developer Console</p>

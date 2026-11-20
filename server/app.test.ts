@@ -180,4 +180,27 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
     const staleJson = (await staleRes.json()) as { bots: Array<{ name: string }> };
     assert.equal(staleJson.bots.length, 1);
   }
+
+  // 7. Social preview HTML serves exact forwarded host & og-preview.jpg + favicons
+  const ogRes = await fetch(`${baseUrl}/api/og-html`, {
+    headers: {
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'telegram-bot-menager.vercel.app',
+    },
+  });
+  assert.equal(ogRes.status, 200);
+  const ogHtml = await ogRes.text();
+  assert.match(ogHtml, /https:\/\/telegram-bot-menager\.vercel\.app\/og-preview\.jpg/);
+  assert.match(ogHtml, /https:\/\/telegram-bot-menager\.vercel\.app\/favicon\.ico/);
+  assert.match(ogHtml, /https:\/\/telegram-bot-menager\.vercel\.app\/icon-192\.png/);
+
+  // 8. Static favicons & og-preview exist in public/ and index.html references telegram-bot-menager.vercel.app
+  const publicDir = path.resolve(process.cwd(), 'public');
+  for (const asset of ['favicon.ico', 'favicon-32x32.png', 'favicon-48x48.png', 'icon-192.png', 'apple-touch-icon.png', 'site.webmanifest', 'og-preview.jpg']) {
+    assert.ok(fs.existsSync(path.join(publicDir, asset)), `Missing public/${asset}`);
+  }
+  const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
+  assert.match(indexHtml, /https:\/\/telegram-bot-menager\.vercel\.app\/og-preview\.jpg/);
+  assert.doesNotMatch(indexHtml, /telegram-bot-manager\.vercel\.app/);
 });
+
