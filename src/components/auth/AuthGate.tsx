@@ -3,6 +3,7 @@ import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Camera, UserPlus,
 import { ApiError, apiFetch, setCsrfToken } from '../../lib/api';
 import { prepareSquareAvatarJpeg } from '../../lib/imageUtils';
 import type { AdminUser, ThemeMode } from '../../types';
+import { ThemeBackdrop } from '../layout/ThemeBackdrop';
 
 export function AuthGate({
   setupRequired,
@@ -117,12 +118,13 @@ export function AuthGate({
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-between bg-[#F6F7FB] dark:bg-[#090B14] text-[#171A2B] dark:text-slate-100 px-4 py-6 sm:px-6">
+    <div className="relative min-h-screen flex flex-col justify-between bg-[#F4F6FD] dark:bg-[#070815] text-[#171A2B] dark:text-slate-100 px-4 py-4 sm:px-6 sm:py-5 overflow-x-hidden">
+      <ThemeBackdrop variant="auth" />
       {conflictToast && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 rounded-2xl bg-white dark:bg-[#151B2B] border border-[#F5B942]/45 shadow-2xl p-3.5 flex items-start gap-3"
+          className="fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 rounded-2xl bg-white/90 dark:bg-[#0D1023]/90 backdrop-blur-xl border border-[#F5B942]/45 shadow-2xl p-3.5 flex items-start gap-3"
         >
           <div className="w-8 h-8 rounded-xl bg-[#F5B942]/15 text-[#D99B16] dark:text-[#F5B942] flex items-center justify-center shrink-0">
             <AlertTriangle className="w-4 h-4" />
@@ -141,12 +143,12 @@ export function AuthGate({
           </button>
         </div>
       )}
-      <div className="max-w-5xl w-full mx-auto flex items-center justify-between">
+      <div className="relative z-10 max-w-5xl w-full mx-auto flex items-center justify-between">
         <div className="flex items-center gap-3">
           <img
             src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
             alt="XC BOT CONTROL"
-            className="w-20 h-14 object-contain shrink-0 border-0"
+            className="w-20 h-14 object-contain shrink-0 border-0 drop-shadow-[0_4px_14px_rgba(117,101,246,0.28)]"
           />
           <span className="font-display font-bold text-base tracking-tight">XC BOT CONTROL</span>
         </div>
@@ -154,23 +156,23 @@ export function AuthGate({
           type="button"
           onClick={onToggleTheme}
           aria-label="Toggle theme"
-          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-white dark:bg-[#151B2B] text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
+          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[#E2E5F3]/90 dark:border-[#7C6BFF]/30 bg-white/75 dark:bg-[#0D1023]/75 backdrop-blur-md text-[#73798C] dark:text-slate-200 hover:text-[#171A2B] dark:hover:text-white transition-colors shadow-sm"
         >
           {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
         </button>
       </div>
 
-      <main className="max-w-md w-full mx-auto my-8">
-        <div className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-6 sm:p-8 shadow-sm">
-          <div className="flex justify-center mb-5">
-            <img
-              src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
-              alt="XC BOT CONTROL Logo"
-              className="w-60 h-40 sm:w-72 sm:h-48 object-contain border-0"
-            />
-          </div>
+      <main className="relative z-10 max-w-md w-full mx-auto my-2 sm:my-4">
+        <div className="flex justify-center -mb-5 sm:-mb-6 relative z-10 pointer-events-none">
+          <img
+            src="/assets/aistudio/file_000000007dd8820b9043e2e9eb3cd7c6_34c37a13.png"
+            alt="XC BOT CONTROL Logo"
+            className="w-52 h-36 sm:w-64 sm:h-40 object-contain border-0 drop-shadow-[0_12px_28px_rgba(88,72,224,0.32)] dark:drop-shadow-[0_12px_32px_rgba(139,92,246,0.48)]"
+          />
+        </div>
+        <div className="bg-white/80 dark:bg-[#0B0D1F]/76 backdrop-blur-xl border border-white/85 dark:border-[#7C6BFF]/25 rounded-2xl px-6 pb-6 pt-8 sm:px-8 sm:pb-7 sm:pt-9 shadow-[0_24px_60px_rgba(92,76,228,0.14)] dark:shadow-[0_24px_64px_rgba(4,6,18,0.78),0_0_40px_rgba(117,101,246,0.14)]">
           {mode !== 'recover' && (
-            <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 mb-5">
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#EEF0FA]/90 dark:bg-[#080A17]/80 border border-[#E0E4F2] dark:border-white/10 mb-5">
               <button
                 type="button"
                 onClick={() => {
@@ -245,12 +247,12 @@ export function AuthGate({
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'register' && (
-              <div className="flex items-center gap-4 p-3 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800">
+              <div className="flex items-center gap-4 p-3 rounded-xl bg-[#F1F3FA]/85 dark:bg-[#080A17]/70 border border-[#DFE3F1] dark:border-white/10">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Upload profile picture"
-                  className="w-16 h-16 rounded-full border-2 border-dashed border-[#7565F6]/50 bg-white dark:bg-[#151B2B] flex items-center justify-center overflow-hidden shrink-0 hover:border-[#7565F6] transition-colors"
+                  className="w-16 h-16 rounded-full border-2 border-dashed border-[#7565F6]/50 bg-white/90 dark:bg-[#12162E]/90 flex items-center justify-center overflow-hidden shrink-0 hover:border-[#7565F6] transition-colors"
                 >
                   {avatarDataUrl ? (
                     <img src={avatarDataUrl} alt="Profile preview" className="w-full h-full object-cover" />
@@ -294,7 +296,7 @@ export function AuthGate({
                   required
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F1F3FA]/90 dark:bg-[#080A17]/75 border border-[#DFE3F1] dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
             )}
@@ -311,7 +313,7 @@ export function AuthGate({
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F1F3FA]/90 dark:bg-[#080A17]/75 border border-[#DFE3F1] dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
             )}
@@ -327,7 +329,7 @@ export function AuthGate({
                   required
                   value={recoveryCode}
                   onChange={(e) => setRecoveryCode(e.target.value)}
-                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm font-mono rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  className="w-full px-3.5 py-2.5 min-h-[44px] text-sm font-mono rounded-xl bg-[#F1F3FA]/90 dark:bg-[#080A17]/75 border border-[#DFE3F1] dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
               </div>
             )}
@@ -344,7 +346,7 @@ export function AuthGate({
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-3.5 pr-11 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  className="w-full pl-3.5 pr-11 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F1F3FA]/90 dark:bg-[#080A17]/75 border border-[#DFE3F1] dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
                 />
                 <button
                   type="button"
@@ -420,7 +422,7 @@ export function AuthGate({
         </div>
       </main>
 
-      <footer className="max-w-5xl w-full mx-auto text-center text-xs text-[#73798C] dark:text-slate-500">
+      <footer className="relative z-10 max-w-5xl w-full mx-auto text-center text-xs text-slate-600 dark:text-slate-300/80">
         AES-256-GCM Token Encryption · Scrypt Auth · CSRF Protected
       </footer>
     </div>

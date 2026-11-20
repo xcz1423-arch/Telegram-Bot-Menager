@@ -33,6 +33,7 @@ import {
 import type { AdminUser, BotSummary, NavTab, NotificationItem, ThemeMode } from '../../types';
 import { Modal } from '../ui/Primitives';
 import { UserAvatar, VerifiedBadgeIcon } from '../ui/VerifiedBadge';
+import { ThemeBackdrop } from './ThemeBackdrop';
 
 interface NavGroup {
   label: string;
@@ -179,15 +180,16 @@ export function AppShell({
   };
 
   return (
-    <div className="min-h-screen flex bg-[#F6F7FB] dark:bg-[#090B14] text-[#171A2B] dark:text-slate-100 overflow-x-hidden">
+    <div className="xc-themed-workspace relative min-h-screen flex bg-[#F4F6FD] dark:bg-[#070815] text-[#171A2B] dark:text-slate-100 overflow-x-hidden">
+      <ThemeBackdrop variant="workspace" />
       {/* Desktop Collapsible Sidebar */}
       <aside
         aria-label="Primary navigation"
-        className={`hidden lg:flex flex-col shrink-0 border-r border-[#E8EAF1] dark:border-slate-800/90 bg-white dark:bg-[#101421] transition-all duration-200 sticky top-0 h-screen ${
+        className={`relative z-20 hidden lg:flex flex-col shrink-0 border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 bg-white/80 dark:bg-[#0C0F20]/76 backdrop-blur-xl transition-all duration-200 sticky top-0 h-screen ${
           sidebarCollapsed ? 'w-[74px]' : 'w-[256px]'
         }`}
       >
-        <div className="h-[84px] px-3.5 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800/90 shrink-0">
+        <div className="h-[84px] px-3.5 flex items-center justify-between border-b border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 shrink-0">
           <button
             type="button"
             onClick={() => handleNavClick('dashboard')}
@@ -269,7 +271,7 @@ export function AppShell({
       {mobileDrawerOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={() => setMobileDrawerOpen(false)} />
-          <aside className="relative w-72 max-w-[85vw] h-full bg-white dark:bg-[#101421] border-r border-[#E8EAF1] dark:border-slate-800 flex flex-col z-10">
+          <aside className="relative w-72 max-w-[85vw] h-full bg-white/88 dark:bg-[#0C0F20]/88 backdrop-blur-xl border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/25 flex flex-col z-10">
             <div className="h-[84px] px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <img
@@ -383,9 +385,9 @@ export function AppShell({
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="relative z-10 flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="sticky top-0 z-30 h-[52px] lg:h-14 px-3 sm:px-6 bg-white/90 dark:bg-[#101421]/90 backdrop-blur-md border-b border-[#E8EAF1] dark:border-slate-800/90 flex items-center justify-between gap-2 sm:gap-4">
+        <header className="sticky top-0 z-30 h-[52px] lg:h-14 px-3 sm:px-6 bg-white/76 dark:bg-[#0C0F20]/74 backdrop-blur-xl border-b border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 flex items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
@@ -415,7 +417,7 @@ export function AppShell({
                 id="global-bot-selector"
                 value={activeBotId ?? ''}
                 onChange={(e) => onSelectBot(e.target.value ? Number(e.target.value) : null)}
-                className="h-9 max-w-[118px] sm:max-w-[210px] pl-2.5 pr-6 sm:pr-7 text-xs font-medium rounded-xl bg-[#F6F7FB] dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 text-[#171A2B] dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#7565F6] appearance-none truncate"
+                className="h-9 max-w-[118px] sm:max-w-[210px] pl-2.5 pr-6 sm:pr-7 text-xs font-medium rounded-xl bg-white/75 dark:bg-[#141930]/75 border border-[#E2E6F5] dark:border-[#7C6BFF]/25 text-[#171A2B] dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#7565F6] appearance-none truncate"
               >
                 <option value="">All Bots ({bots.length})</option>
                 {bots.map((b) => (
@@ -431,7 +433,7 @@ export function AppShell({
               type="button"
               onClick={() => setSearchOpen(true)}
               aria-label="Global search"
-              className="hidden sm:flex min-h-[40px] min-w-[40px] sm:px-3 items-center justify-center gap-1.5 rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] text-xs text-[#73798C] dark:text-slate-400 hover:text-[#171A2B] dark:hover:text-white transition-colors"
+              className="hidden sm:flex min-h-[40px] min-w-[40px] sm:px-3 items-center justify-center gap-1.5 rounded-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 bg-white/75 dark:bg-[#141930]/75 text-xs text-[#73798C] dark:text-slate-400 hover:text-[#171A2B] dark:hover:text-white transition-colors"
             >
               <Search className="w-4 h-4" />
               <span className="hidden md:inline whitespace-nowrap">Search</span>
@@ -441,7 +443,7 @@ export function AppShell({
               type="button"
               onClick={onCycleTheme}
               aria-label={`Switch theme (current: ${theme})`}
-              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 bg-white/75 dark:bg-[#141930]/75 text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
             >
               {(theme === 'dark' ||
                 (theme === 'system' &&
@@ -462,7 +464,7 @@ export function AppShell({
                   setProfileOpen(false);
                 }}
                 aria-label="Notifications"
-                className="relative min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
+                className="relative min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 bg-white/75 dark:bg-[#141930]/75 text-[#73798C] dark:text-slate-300 hover:text-[#171A2B] dark:hover:text-white transition-colors"
               >
                 <Bell className="w-4 h-4" />
                 {unreadCount > 0 && (
@@ -473,7 +475,7 @@ export function AppShell({
               </button>
 
               {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-3 z-50">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-3 z-50">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E8EAF1] dark:border-slate-800">
                     <span className="text-xs font-semibold flex items-center gap-1.5">
                       <Bell className="w-3.5 h-3.5 text-[#7565F6]" />
@@ -568,7 +570,7 @@ export function AppShell({
                   setNotifOpen(false);
                 }}
                 aria-label="User profile menu"
-                className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 min-h-[40px] rounded-xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#151B2B] hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 min-h-[40px] rounded-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 bg-white/75 dark:bg-[#141930]/75 hover:border-slate-300 dark:hover:border-[#7C6BFF]/45 transition-colors"
               >
                 <UserAvatar
                   avatarUrl={admin.avatarUrl}
@@ -583,7 +585,7 @@ export function AppShell({
               </button>
 
               {profileOpen && (
-                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 shadow-xl p-2 z-50">
+                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-2 z-50">
                   <div className="px-3 py-2 border-b border-[#E8EAF1] dark:border-slate-800 mb-1 flex items-center gap-2.5">
                     <UserAvatar
                       avatarUrl={admin.avatarUrl}
@@ -633,7 +635,7 @@ export function AppShell({
 
         {/* Active Bot Context Bar (when a specific bot is selected) */}
         {activeBot && (
-          <div className="px-3 sm:px-6 py-2 bg-[#6555E8]/6 dark:bg-[#7565F6]/8 border-b border-[#E8EAF1] dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="px-3 sm:px-6 py-2 bg-[#6555E8]/10 dark:bg-[#7565F6]/14 backdrop-blur-md border-b border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2 min-w-0">
               <span data-no-smallcaps="true" className="font-semibold text-[#171A2B] dark:text-slate-100 truncate">{activeBot.name}</span>
               <span aria-hidden="true" className="text-[#73798C]">·</span>
@@ -662,7 +664,7 @@ export function AppShell({
       {/* Mobile Fixed Thumb-Zone Bottom Navigation Bar (58px + safe area) */}
       <nav
         aria-label="Mobile bottom navigation"
-        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-white/95 dark:bg-[#101421]/95 backdrop-blur-md border-t border-[#E8EAF1] dark:border-slate-800 grid grid-cols-5 h-[58px] pb-safe"
+        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-white/86 dark:bg-[#0C0F20]/84 backdrop-blur-xl border-t border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 grid grid-cols-5 h-[58px] pb-safe"
       >
         {[
           { id: 'dashboard' as NavTab, label: 'Overview', icon: LayoutDashboard },

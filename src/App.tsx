@@ -16,6 +16,7 @@ import { DebugConsoleView } from './components/views/DebugConsoleView';
 import { AnalyticsView, ActivityLogsView } from './components/views/AnalyticsActivityView';
 import { SettingsHealthBackupView } from './components/views/SettingsHealthBackupView';
 import { ToastContainer } from './components/ui/Primitives';
+import { ThemeBackdrop } from './components/layout/ThemeBackdrop';
 import { toSmallCaps } from './lib/smallCaps';
 
 const SKIP_SMALL_CAPS_TAGS = new Set(['INPUT', 'TEXTAREA', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'NOSCRIPT']);
@@ -253,8 +254,11 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F6F7FB] dark:bg-[#090B14] text-[#73798C] dark:text-slate-400 text-xs font-mono">
-        Loading XC BOT CONTROL...
+      <div className="relative min-h-screen flex items-center justify-center bg-[#F4F6FD] dark:bg-[#070815] text-[#73798C] dark:text-slate-300 text-xs font-mono">
+        <ThemeBackdrop variant="auth" />
+        <span className="relative z-10 px-4 py-2 rounded-xl bg-white/75 dark:bg-[#0B0D1F]/75 backdrop-blur-xl border border-white/80 dark:border-[#7C6BFF]/25">
+          Loading XC BOT CONTROL...
+        </span>
       </div>
     );
   }
