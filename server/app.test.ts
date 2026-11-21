@@ -377,5 +377,63 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
   assert.equal(delDescPhotoRes.status, 200);
   const delDescPhotoJson = (await delDescPhotoRes.json()) as { bot: { description_photo_url: string | null } };
   assert.equal(delDescPhotoJson.bot.description_photo_url, null);
+
+  // 13. Single-save bot profile (name + bio + description) & profile-photo persistence + delete
+  const patchRes = await fetch(`${baseUrl}/api/bots/${targetBotId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({
+      name: 'First Save Name',
+      short_description: 'Instant Bio Sync',
+      description: 'Updated What Can This Bot Do Text',
+      sync_telegram: true,
+    }),
+  });
+  assert.equal(patchRes.status, 200);
+  const patchJson = (await patchRes.json()) as {
+    ok: boolean;
+    syncedMethods: string[];
+    bot: { name: string; short_description: string; description: string };
+  };
+  assert.equal(patchJson.ok, true);
+  assert.equal(patchJson.bot.name, 'First Save Name');
+  assert.equal(patchJson.bot.short_description, 'Instant Bio Sync');
+  assert.equal(patchJson.bot.description, 'Updated What Can This Bot Do Text');
+
+  const SAMPLE_JPEG =
+    'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+  const photoRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/profile-photo`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ imageDataUrl: SAMPLE_JPEG, thumbnailDataUrl: SAMPLE_JPEG }),
+  });
+  assert.equal(photoRes.status, 200);
+  const photoJson = (await photoRes.json()) as { ok: boolean; bot: { avatar_url: string | null } };
+  assert.equal(photoJson.ok, true);
+  assert.equal(photoJson.bot.avatar_url, SAMPLE_JPEG);
+
+  const deleteBotRes = await fetch(`${baseUrl}/api/bots/${targetBotId}`, {
+    method: 'DELETE',
+    headers: {
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+  });
+  assert.equal(deleteBotRes.status, 200);
+  const afterDeleteRes = await fetch(`${baseUrl}/api/bots`, { headers: { Cookie: adminCookie } });
+  const afterDeleteJson = (await afterDeleteRes.json()) as { bots: Array<{ id: number }> };
+  assert.equal(
+    afterDeleteJson.bots.some((b) => b.id === targetBotId),
+    false
+  );
 });
+
 

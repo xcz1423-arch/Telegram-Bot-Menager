@@ -647,8 +647,8 @@ export function exportDatabaseBytes(): Uint8Array | null {
     // ignore
   }
   let exported = activeSqlDb.export();
-  if (exported.length > 48_000) {
-    // Keep serverless synced snapshot compact so HTTP requests stay fast and reliable
+  if (exported.length > 450_000) {
+    // Keep serverless synced snapshot compact without pruning/vacuuming on normal avatar or banner saves
     const logTables = ['api_logs', 'webhook_logs', 'activity_logs', 'login_history', 'notifications', 'bot_updates', 'bot_messages'];
     for (const tbl of logTables) {
       try {
@@ -696,6 +696,33 @@ function runSqlJs(sqlDb: SqlJsDatabase, sql: string, params: unknown[] = []): nu
     return Number(idRes[0].values[0][0] ?? 0);
   }
   return 0;
+}
+
+function copyBotMediaSettings(
+  targetDb: SqlJsDatabase,
+  sourceDb: SqlJsDatabase,
+  targetBotId: number,
+  sourceBotId: number,
+  overwrite: boolean
+): void {
+  const prefixes = ['bot_avatar_', 'bot_desc_pic_', 'bot_menu_button_'];
+  for (const prefix of prefixes) {
+    const rows = querySqlJsAll(
+      sourceDb,
+      `SELECT setting_value, updated_at FROM app_settings WHERE setting_key = ?`,
+      [`${prefix}${sourceBotId}`]
+    );
+    if (rows.length > 0 && rows[0].setting_value) {
+      runSqlJs(
+        targetDb,
+        overwrite
+          ? `INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, COALESCE(?, datetime('now')))
+             ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`
+          : `INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, COALESCE(?, datetime('now')))`,
+        [`${prefix}${targetBotId}`, rows[0].setting_value, rows[0].updated_at ?? null]
+      );
+    }
+  }
 }
 
 /**
@@ -808,23 +835,53 @@ function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDat
           const tbId = Number(tb.id || 0);
           runSqlJs(targetDb, `DELETE FROM bots WHERE id = ?`, [tbId]);
           if (tbId > 0) {
-            runSqlJs(targetDb, `DELETE FROM app_settings WHERE setting_key = ?`, [`bot_avatar_${tbId}`]);
+            runSqlJs(targetDb, `DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)`, [
+              `bot_avatar_${tbId}`,
+              `bot_desc_pic_${tbId}`,
+              `bot_menu_button_${tbId}`,
+            ]);
           }
           mergedCount += 1;
         }
       }
     }
 
-    const existingBots = new Set<string>(
-      querySqlJsAll(targetDb, `SELECT token_fingerprint FROM bots`).map((b) =>
-        String(b.token_fingerprint || '')
-      )
-    );
+    const existingBotByFp = new Map<string, { id: number; updatedAt: string }>();
+    for (const b of querySqlJsAll(targetDb, `SELECT id, token_fingerprint, updated_at FROM bots`)) {
+      const fp = String(b.token_fingerprint || '');
+      if (fp) {
+        existingBotByFp.set(fp, { id: Number(b.id || 0), updatedAt: String(b.updated_at || '') });
+      }
+    }
 
     const srcBots = querySqlJsAll(sourceDb, `SELECT * FROM bots`);
     for (const b of srcBots) {
       const fp = String(b.token_fingerprint || '');
-      if (!fp || existingBots.has(fp)) continue;
+      if (!fp) continue;
+      const existingTarget = existingBotByFp.get(fp);
+      if (existingTarget) {
+        const srcUpdatedAt = String(b.updated_at || '');
+        const oldBotId = Number(b.id || 0);
+        if (srcUpdatedAt && srcUpdatedAt > existingTarget.updatedAt) {
+          runSqlJs(
+            targetDb,
+            `UPDATE bots SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = ? WHERE id = ?`,
+            [
+              b.name,
+              b.short_description ?? '',
+              b.description ?? '',
+              b.connection_status ?? 'connected',
+              srcUpdatedAt,
+              existingTarget.id,
+            ]
+          );
+          if (oldBotId > 0) {
+            copyBotMediaSettings(targetDb, sourceDb, existingTarget.id, oldBotId, true);
+          }
+          mergedCount += 1;
+        }
+        continue;
+      }
       const deletedAt = deletedBotsMap.get(fp);
       const createdAt = String(b.created_at || '');
       if (deletedAt && (!createdAt || deletedAt >= createdAt)) {
@@ -871,20 +928,9 @@ function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDat
         runSqlJs(targetDb, `INSERT OR IGNORE INTO bot_settings (bot_id) VALUES (?)`, [newBotId]);
         const oldBotId = Number(b.id || 0);
         if (oldBotId > 0) {
-          const avatarRows = querySqlJsAll(
-            sourceDb,
-            `SELECT setting_value FROM app_settings WHERE setting_key = ?`,
-            [`bot_avatar_${oldBotId}`]
-          );
-          if (avatarRows.length > 0 && avatarRows[0].setting_value) {
-            runSqlJs(
-              targetDb,
-              `INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, datetime('now'))`,
-              [`bot_avatar_${newBotId}`, avatarRows[0].setting_value]
-            );
-          }
+          copyBotMediaSettings(targetDb, sourceDb, newBotId, oldBotId, false);
         }
-        existingBots.add(fp);
+        existingBotByFp.set(fp, { id: newBotId, updatedAt: String(b.updated_at || '') });
         mergedCount += 1;
       }
     }

@@ -44,6 +44,14 @@ export class ApiError extends Error {
 const VAULT_STORAGE_KEY = 'xc_encrypted_vault';
 const VAULT_REV_STORAGE_KEY = 'xc_encrypted_vault_rev';
 
+function parseVaultSeq(rev: string | undefined | null): number {
+  if (!rev || rev === 'init') return 0;
+  const idx = rev.indexOf(':');
+  if (idx <= 0) return 0;
+  const n = Number.parseInt(rev.slice(0, idx), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function readVault(): { vault: string; rev: string } {
   try {
     return {
@@ -167,7 +175,12 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}, includ
   }
 
   if (typeof json._vault === 'string' && typeof json._vaultRev === 'string') {
-    writeVault(json._vault, json._vaultRev);
+    const serverReset = res.headers.get('X-XC-Vault-Reset') === '1';
+    const currentLocalSeq = parseVaultSeq(stored.rev);
+    const incomingSeq = parseVaultSeq(json._vaultRev);
+    if (serverReset || currentLocalSeq === 0 || incomingSeq >= currentLocalSeq) {
+      writeVault(json._vault, json._vaultRev);
+    }
     delete json._vault;
     delete json._vaultRev;
   }

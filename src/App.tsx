@@ -210,6 +210,30 @@ export default function App() {
     setRefreshKey((k) => k + 1);
   }, []);
 
+  const handleBotUpdated = useCallback((updatedBot: BotSummary) => {
+    setBots((prev) => {
+      const exists = prev.some((b) => b.id === updatedBot.id);
+      if (!exists) return [updatedBot, ...prev];
+      return prev.map((b) =>
+        b.id === updatedBot.id
+          ? {
+              ...b,
+              ...updatedBot,
+              counts: updatedBot.counts ?? b.counts,
+              settings: updatedBot.settings ?? b.settings,
+            }
+          : b
+      );
+    });
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleBotDeleted = useCallback((deletedBotId: number) => {
+    setBots((prev) => prev.filter((b) => b.id !== deletedBotId));
+    setActiveBotId((prev) => (prev === deletedBotId ? null : prev));
+    setRefreshKey((k) => k + 1);
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -350,6 +374,8 @@ export default function App() {
             onNavigate={setActiveTab}
             onOpenAddBot={() => setAddBotOpen(true)}
             onRefresh={loadWorkspaceData}
+            onBotUpdated={handleBotUpdated}
+            onBotDeleted={handleBotDeleted}
             onToast={pushToast}
           />
         )}
@@ -459,9 +485,10 @@ export default function App() {
         open={addBotOpen}
         onClose={() => setAddBotOpen(false)}
         onBotAdded={(bot) => {
-          loadWorkspaceData();
+          handleBotUpdated(bot);
           setActiveBotId(bot.id);
           setActiveTab('bots');
+          loadWorkspaceData();
         }}
         onToast={pushToast}
       />

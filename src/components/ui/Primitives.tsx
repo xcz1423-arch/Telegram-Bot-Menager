@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Copy, AlertCircle, CheckCircle2, AlertTriangle, Info, X } from 'lucide-react';
 import type { ToastMessage } from '../../types';
 
@@ -86,18 +87,17 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-xs p-0 md:p-4"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3.5 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
       <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
       <div
-        className={`relative w-full ${maxWidth} max-h-[92vh] flex flex-col bg-white dark:bg-[#151B2B] text-[#171A2B] dark:text-slate-100 rounded-t-3xl md:rounded-2xl border border-[#E8EAF1] dark:border-slate-800 shadow-2xl overflow-hidden`}
+        className={`relative z-10 w-full ${maxWidth} max-h-[86vh] flex flex-col bg-white dark:bg-[#151B2B] text-[#171A2B] dark:text-slate-100 rounded-2xl border border-[#E8EAF1] dark:border-slate-800 shadow-2xl overflow-hidden`}
       >
-        <div className="md:hidden w-10 h-1 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mt-2.5 shrink-0" />
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-[#E8EAF1] dark:border-slate-800 shrink-0">
           <div className="min-w-0">
             <h2 className="text-base font-semibold truncate">{title}</h2>
@@ -116,6 +116,8 @@ export function Modal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }
 
 export function ConfirmDialog({
@@ -219,10 +221,10 @@ export function ToastContainer({
   onDismiss: (id: string) => void;
 }) {
   if (toasts.length === 0) return null;
-  return (
+  const content = (
     <div
       aria-live="polite"
-      className="fixed top-3.5 left-3.5 right-3.5 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-[400px] z-[60] flex flex-col gap-2.5 pointer-events-none"
+      className="fixed top-3.5 left-3.5 right-3.5 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-[400px] z-[80] flex flex-col gap-2.5 pointer-events-none"
     >
       {toasts.map((t) => {
         const accentClass =
@@ -272,4 +274,6 @@ export function ToastContainer({
       })}
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

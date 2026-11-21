@@ -1207,6 +1207,7 @@ apiRouter.patch('/bots/:id', async (req, res) => {
   const status = req.body?.connection_status;
   const nextStatus = ['connected', 'disconnected'].includes(status) ? status : bot.connection_status;
   const syncTelegram = req.body?.sync_telegram !== false;
+  const forceSync = Boolean(req.body?.force_sync);
 
   if (!name) {
     res.status(400).json({ error: 'Bot name cannot be empty.' });
@@ -1225,52 +1226,88 @@ apiRouter.patch('/bots/:id', async (req, res) => {
     return;
   }
 
+  let savedName = bot.name;
+  let savedShort = bot.short_description || '';
+  let savedDescription = bot.description || '';
+
+  const callTelegramProfileMethod = async (method: string, params: Record<string, unknown>) => {
+    let outcome = await executeBotMethod(bot, method, params);
+    if (!outcome.ok && outcome.errorCode === 429) {
+      const retrySec = Number((outcome.rawResponse?.parameters as { retry_after?: number } | undefined)?.retry_after || 0);
+      if (retrySec > 0 && retrySec <= 2) {
+        await new Promise((r) => setTimeout(r, retrySec * 1000 + 150));
+        outcome = await executeBotMethod(bot, method, params);
+      }
+    }
+    return outcome;
+  };
+
   const syncedMethods: string[] = [];
   if (syncTelegram) {
-    if (name !== bot.name) {
-      const r = await executeBotMethod(bot, 'setMyName', { name });
+    if (name !== bot.name || forceSync) {
+      const r = await callTelegramProfileMethod('setMyName', { name });
       if (!r.ok) {
         res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
           error: `Telegram setMyName failed: ${r.description || 'Unknown error'}`,
+          bot: sanitizeBotForClient(getBotById(bot.id)!),
         });
         return;
       }
+      savedName = name;
       syncedMethods.push('setMyName');
     }
 
-    if (shortDesc !== (bot.short_description || '')) {
-      const r = await executeBotMethod(bot, 'setMyShortDescription', { short_description: shortDesc });
+    if (shortDesc !== (bot.short_description || '') || forceSync) {
+      const r = await callTelegramProfileMethod('setMyShortDescription', { short_description: shortDesc });
       if (!r.ok) {
+        db.prepare(`
+          UPDATE bots
+          SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
         res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
           error: `Telegram setMyShortDescription failed: ${r.description || 'Unknown error'}`,
+          bot: sanitizeBotForClient(getBotById(bot.id)!),
         });
         return;
       }
+      savedShort = shortDesc;
       syncedMethods.push('setMyShortDescription');
     }
 
-    if (description !== (bot.description || '')) {
-      const r = await executeBotMethod(bot, 'setMyDescription', { description });
+    if (description !== (bot.description || '') || forceSync) {
+      const r = await callTelegramProfileMethod('setMyDescription', { description });
       if (!r.ok) {
+        db.prepare(`
+          UPDATE bots
+          SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
         res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
           error: `Telegram setMyDescription failed: ${r.description || 'Unknown error'}`,
+          bot: sanitizeBotForClient(getBotById(bot.id)!),
         });
         return;
       }
+      savedDescription = description;
       syncedMethods.push('setMyDescription');
     }
+  } else {
+    savedName = name;
+    savedShort = shortDesc;
+    savedDescription = description;
   }
 
   db.prepare(`
     UPDATE bots
     SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).run(name, shortDesc, description, nextStatus, bot.id);
+  `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
 
   logActivity({
     action: 'BOT_UPDATED',
     botId: bot.id,
-    botName: name,
+    botName: savedName,
     status: 'success',
     relatedResource: `@${bot.username}`,
     details: syncedMethods.length
@@ -1366,11 +1403,12 @@ apiRouter.post('/bots/:id/profile-photo', async (req, res) => {
     return;
   }
 
-  const validThumb = /^data:image\/(jpeg|jpg);base64,[A-Za-z0-9+/=]+$/i.test(rawThumb) && rawThumb.length <= 65_000;
-  const avatarToStore = validThumb ? rawThumb : rawImage.length <= 65_000 ? rawImage : '';
+  const validThumb = /^data:image\/(jpeg|jpg);base64,[A-Za-z0-9+/=]+$/i.test(rawThumb) && rawThumb.length <= 120_000;
+  const avatarToStore = validThumb ? rawThumb : rawImage.length <= 180_000 ? rawImage : rawThumb || rawImage;
   if (avatarToStore) {
     setSetting(`bot_avatar_${bot.id}`, avatarToStore);
   }
+  db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
     action: 'BOT_PHOTO_UPDATED',
@@ -1401,6 +1439,7 @@ apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
   }
 
   db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
+  db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
     action: 'BOT_PHOTO_REMOVED',
@@ -1434,6 +1473,7 @@ apiRouter.post('/bots/:id/description-photo', (req, res) => {
   }
 
   setSetting(`bot_desc_pic_${bot.id}`, rawImage);
+  db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
     action: 'BOT_DESC_PHOTO_UPDATED',
@@ -1455,6 +1495,7 @@ apiRouter.delete('/bots/:id/description-photo', (req, res) => {
     return;
   }
   db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_desc_pic_${bot.id}`);
+  db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
     action: 'BOT_DESC_PHOTO_REMOVED',
@@ -1519,6 +1560,7 @@ apiRouter.put('/bots/:id/menu-button', async (req, res) => {
   }
 
   setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(normalized));
+  db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
     action: 'BOT_MENU_BUTTON_UPDATED',

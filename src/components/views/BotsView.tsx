@@ -51,10 +51,18 @@ async function prepareBotAvatarJpegs(file: File): Promise<{ uploadDataUrl: strin
       return canvas.toDataURL('image/jpeg', quality);
     };
 
-    return {
-      uploadDataUrl: renderSquareJpeg(512, 0.88),
-      thumbDataUrl: renderSquareJpeg(128, 0.78),
-    };
+    let uploadDataUrl = renderSquareJpeg(512, 0.88);
+    if (uploadDataUrl.length > 450_000) {
+      uploadDataUrl = renderSquareJpeg(512, 0.72);
+    }
+
+    let thumbDataUrl = renderSquareJpeg(128, 0.78);
+    for (const q of [0.65, 0.52, 0.4]) {
+      if (thumbDataUrl.length <= 55_000) break;
+      thumbDataUrl = renderSquareJpeg(128, q);
+    }
+
+    return { uploadDataUrl, thumbDataUrl };
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -99,8 +107,9 @@ async function prepareDescriptionBannerJpeg(file: File): Promise<string> {
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
 
     let dataUrl = canvas.toDataURL('image/jpeg', 0.86);
-    if (dataUrl.length > 220_000) {
-      dataUrl = canvas.toDataURL('image/jpeg', 0.74);
+    for (const q of [0.74, 0.62, 0.5, 0.38]) {
+      if (dataUrl.length <= 220_000) break;
+      dataUrl = canvas.toDataURL('image/jpeg', q);
     }
     return dataUrl;
   } finally {
@@ -440,6 +449,8 @@ export function BotsView({
   onNavigate,
   onOpenAddBot,
   onRefresh,
+  onBotUpdated,
+  onBotDeleted,
   onToast,
 }: {
   bots: BotSummary[];
@@ -448,6 +459,8 @@ export function BotsView({
   onNavigate: (tab: NavTab) => void;
   onOpenAddBot: () => void;
   onRefresh: () => void;
+  onBotUpdated: (bot: BotSummary) => void;
+  onBotDeleted: (botId: number) => void;
   onToast: (type: 'success' | 'error' | 'info', title: string, desc?: string) => void;
 }) {
   const selectedBot = bots.find((b) => b.id === activeBotId) || bots[0] || null;
@@ -470,9 +483,17 @@ export function BotsView({
   const [menuButtonUrl, setMenuButtonUrl] = useState(selectedBot?.menu_button?.url || '');
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const descBannerInputRef = useRef<HTMLInputElement | null>(null);
+  const prevBotIdRef = useRef<number | null>(selectedBot?.id ?? null);
 
   React.useEffect(() => {
-    if (selectedBot) {
+    if (!selectedBot) {
+      prevBotIdRef.current = null;
+      return;
+    }
+    const switchedBot = prevBotIdRef.current !== selectedBot.id;
+    prevBotIdRef.current = selectedBot.id;
+
+    if (switchedBot) {
       setEditName(selectedBot.name);
       setEditShort(selectedBot.short_description || '');
       setEditDescription(selectedBot.description || '');
@@ -483,28 +504,36 @@ export function BotsView({
       setMenuButtonText(selectedBot.menu_button?.text || 'Open');
       setMenuButtonUrl(selectedBot.menu_button?.url || '');
     }
+  }, [selectedBot]);
+
+  React.useEffect(() => {
+    if (!selectedBot) return;
+    setParseMode(selectedBot.settings?.default_parse_mode || 'HTML');
+    setDisableNotif(Boolean(selectedBot.settings?.disable_notification));
+    setProtectContent(Boolean(selectedBot.settings?.protect_content));
   }, [
     selectedBot?.id,
-    selectedBot?.name,
-    selectedBot?.short_description,
-    selectedBot?.description,
-    selectedBot?.connection_status,
-    selectedBot?.menu_button?.text,
-    selectedBot?.menu_button?.url,
+    selectedBot?.settings?.default_parse_mode,
+    selectedBot?.settings?.disable_notification,
+    selectedBot?.settings?.protect_content,
   ]);
 
   const handleTestConnection = async (bot: BotSummary) => {
     setBusyAction('test');
     try {
-      const res = await apiFetch<{ ok: boolean; durationMs: number }>(`/api/bots/${bot.id}/test-connection`, {
+      const res = await apiFetch<{ ok: boolean; durationMs: number; bot?: BotSummary }>(`/api/bots/${bot.id}/test-connection`, {
         method: 'POST',
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       onToast(
         res.ok ? 'success' : 'error',
         res.ok ? 'Connection Healthy' : 'Connection Failed',
         `getMe responded in ${res.durationMs}ms`
       );
-      onRefresh();
     } catch (err) {
       onToast('error', 'Test Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -515,9 +544,18 @@ export function BotsView({
   const handleRevalidate = async (bot: BotSummary) => {
     setBusyAction('revalidate');
     try {
-      await apiFetch(`/api/bots/${bot.id}/revalidate`, { method: 'POST' });
+      const res = await apiFetch<{ ok: boolean; bot?: BotSummary }>(`/api/bots/${bot.id}/revalidate`, { method: 'POST' });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+        setEditName(res.bot.name);
+        setEditShort(res.bot.short_description || '');
+        setEditDescription(res.bot.description || '');
+        setMenuButtonText(res.bot.menu_button?.text || 'Open');
+        setMenuButtonUrl(res.bot.menu_button?.url || '');
+      } else {
+        onRefresh();
+      }
       onToast('success', 'Token Revalidated', `@${bot.username} profile synced.`);
-      onRefresh();
     } catch (err) {
       onToast('error', 'Revalidation Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -540,6 +578,15 @@ export function BotsView({
           sync_telegram: syncTelegram,
         }),
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+        setEditName(res.bot.name);
+        setEditShort(res.bot.short_description || '');
+        setEditDescription(res.bot.description || '');
+        setEditStatus(res.bot.connection_status === 'disconnected' ? 'disconnected' : 'connected');
+      } else {
+        onRefresh();
+      }
       onToast(
         'success',
         'Bot Profile Updated',
@@ -547,7 +594,6 @@ export function BotsView({
           ? `Saved & synced with Telegram (${res.syncedMethods.join(', ')}).`
           : 'Configuration saved.'
       );
-      onRefresh();
     } catch (err) {
       onToast('error', 'Update Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -562,11 +608,17 @@ export function BotsView({
       const res = await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/sync-profile`, {
         method: 'POST',
       });
-      setEditName(res.bot.name);
-      setEditShort(res.bot.short_description || '');
-      setEditDescription(res.bot.description || '');
-      onToast('success', 'Profile Synced', `Loaded current Name & Bio for @${selectedBot.username}.`);
-      onRefresh();
+      if (res.bot) {
+        onBotUpdated(res.bot);
+        setEditName(res.bot.name);
+        setEditShort(res.bot.short_description || '');
+        setEditDescription(res.bot.description || '');
+        setMenuButtonText(res.bot.menu_button?.text || 'Open');
+        setMenuButtonUrl(res.bot.menu_button?.url || '');
+      } else {
+        onRefresh();
+      }
+      onToast('success', 'Profile Synced', `Loaded current Name, Bio, Photo & Links for @${selectedBot.username}.`);
     } catch (err) {
       onToast('error', 'Sync Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -585,12 +637,16 @@ export function BotsView({
     setBusyAction('photo');
     try {
       const { uploadDataUrl, thumbDataUrl } = await prepareBotAvatarJpegs(file);
-      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
+      const res = await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
         method: 'POST',
         body: JSON.stringify({ imageDataUrl: uploadDataUrl, thumbnailDataUrl: thumbDataUrl }),
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       onToast('success', 'Profile Photo Updated', `New profile picture synced for @${selectedBot.username}.`);
-      onRefresh();
     } catch (err) {
       onToast('error', 'Photo Update Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -602,11 +658,15 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('remove_photo');
     try {
-      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
+      const res = await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/profile-photo`, {
         method: 'DELETE',
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       onToast('info', 'Profile Photo Removed', `Cleared Telegram profile picture for @${selectedBot.username}.`);
-      onRefresh();
     } catch (err) {
       onToast('error', 'Remove Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -625,16 +685,20 @@ export function BotsView({
     setBusyAction('desc_banner');
     try {
       const bannerDataUrl = await prepareDescriptionBannerJpeg(file);
-      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/description-photo`, {
+      const res = await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/description-photo`, {
         method: 'POST',
         body: JSON.stringify({ imageDataUrl: bannerDataUrl }),
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       onToast(
         'success',
         'Description Picture Saved',
-        '640×360 banner updated in preview. You can also download it for @BotFather (/setdescriptionpic).'
+        '640×360 banner updated in preview. Download & send it to @BotFather (/setdescriptionpic) for Telegram.'
       );
-      onRefresh();
     } catch (err) {
       onToast('error', 'Banner Upload Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -646,9 +710,13 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('remove_desc_banner');
     try {
-      await apiFetch(`/api/bots/${selectedBot.id}/description-photo`, { method: 'DELETE' });
+      const res = await apiFetch<{ ok: boolean; bot?: BotSummary }>(`/api/bots/${selectedBot.id}/description-photo`, { method: 'DELETE' });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       onToast('info', 'Description Picture Removed', `Cleared 640×360 banner for @${selectedBot.username}.`);
-      onRefresh();
     } catch (err) {
       onToast('error', 'Remove Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -670,7 +738,7 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('menu_button');
     try {
-      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string } }>(
+      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string }; bot?: BotSummary }>(
         `/api/bots/${selectedBot.id}/menu-button`,
         {
           method: 'PUT',
@@ -681,12 +749,18 @@ export function BotsView({
           }),
         }
       );
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
+      setMenuButtonText(res.menu_button?.text || 'Open');
+      setMenuButtonUrl(res.menu_button?.url || '');
       onToast(
         'success',
         'Web App Link Updated',
         `Menu button "${res.menu_button.text || 'Open'}" synced via setChatMenuButton.`
       );
-      onRefresh();
     } catch (err) {
       onToast('error', 'Web App Link Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -698,9 +772,14 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('pull_menu_button');
     try {
-      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string } }>(
+      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string }; bot?: BotSummary }>(
         `/api/bots/${selectedBot.id}/menu-button`
       );
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       setMenuButtonText(res.menu_button?.text || 'Open');
       setMenuButtonUrl(res.menu_button?.url || '');
       onToast(
@@ -710,7 +789,6 @@ export function BotsView({
           ? `Current link: ${res.menu_button.url}`
           : `Menu mode is currently "${res.menu_button?.type || 'default'}".`
       );
-      onRefresh();
     } catch (err) {
       onToast('error', 'Pull Link Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -722,14 +800,18 @@ export function BotsView({
     if (!selectedBot) return;
     setBusyAction('reset_menu_button');
     try {
-      await apiFetch(`/api/bots/${selectedBot.id}/menu-button`, {
+      const res = await apiFetch<{ ok: boolean; bot?: BotSummary }>(`/api/bots/${selectedBot.id}/menu-button`, {
         method: 'PUT',
         body: JSON.stringify({ type: 'default' }),
       });
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      } else {
+        onRefresh();
+      }
       setMenuButtonText('Open');
       setMenuButtonUrl('');
       onToast('info', 'Menu Button Reset', `Restored default Telegram menu button for @${selectedBot.username}.`);
-      onRefresh();
     } catch (err) {
       onToast('error', 'Reset Failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -766,16 +848,14 @@ export function BotsView({
     setBusyAction('delete');
     try {
       await apiFetch(`/api/bots/${targetId}`, { method: 'DELETE' });
-      onToast('info', 'Bot Removed', `@${targetUsername} and its encrypted credentials were removed.`);
-      if (activeBotId === targetId) onSelectBot(null);
+      onBotDeleted(targetId);
       setDeleteTarget(null);
-      onRefresh();
+      onToast('info', 'Bot Removed', `@${targetUsername} and its encrypted credentials were removed.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.toLowerCase().includes('not found')) {
-        if (activeBotId === targetId) onSelectBot(null);
+        onBotDeleted(targetId);
         setDeleteTarget(null);
-        onRefresh();
         onToast('info', 'Bot Removed', `@${targetUsername} is no longer in your connected fleet.`);
       } else {
         onToast('error', 'Delete Failed', msg || undefined);
@@ -1206,10 +1286,19 @@ export function BotsView({
                     </button>
                   </>
                 )}
+                <a
+                  href="https://t.me/BotFather"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 min-h-[38px] rounded-xl border border-[#7565F6]/30 text-[#6555E8] dark:text-[#A599FF] hover:bg-[#7565F6]/10 text-xs font-medium inline-flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open @BotFather</span>
+                </a>
               </div>
 
               <p className="text-[11px] text-[#73798C] dark:text-slate-400 leading-relaxed">
-                Note: Telegram restricts uploading the empty-chat description photo exclusively to <span data-no-smallcaps="true" className="font-mono">@BotFather</span> (<code className="font-mono">/setdescriptionpic</code>). Saving here previews your 640×360 banner and lets you export it ready for <span data-no-smallcaps="true" className="font-mono">@BotFather</span>.
+                Note: Telegram&apos;s Bot API only allows changing the circular Bot Profile Picture (<code className="font-mono">setMyProfilePhoto</code>), Name, Bio &amp; Description directly; the &ldquo;What can this bot do?&rdquo; banner image must be uploaded via <span data-no-smallcaps="true" className="font-mono">@BotFather</span> (<code className="font-mono">/setdescriptionpic</code>). Saving here updates your console preview right away and exports the exact 640×360 JPEG for <span data-no-smallcaps="true" className="font-mono">@BotFather</span>.
               </p>
             </div>
 

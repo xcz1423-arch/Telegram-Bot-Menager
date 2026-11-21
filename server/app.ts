@@ -18,6 +18,7 @@ import { apiRouter } from './routes.js';
 
 let appReadyPromise: Promise<void> | null = null;
 let lastCloudPullAt = 0;
+let lastCloudPushAt = 0;
 
 export async function ensureAppReady(): Promise<void> {
   if (!appReadyPromise) {
@@ -42,6 +43,7 @@ export async function ensureAppReady(): Promise<void> {
 async function syncCloudVaultOnWarmLambda(force: boolean): Promise<void> {
   if (!isSqlJsActive() || !isCloudSyncConfigured()) return;
   const now = Date.now();
+  if (now - lastCloudPushAt < 1500) return;
   if (!force && now - lastCloudPullAt < 3000) return;
   lastCloudPullAt = now;
   const cloudBytes = await pullCloudVault();
@@ -156,7 +158,8 @@ export function createApp() {
         if (req.path === '/vault/sync' && req.method.toUpperCase() === 'POST') {
           const raw = exportDatabaseBytes();
           if (raw && isCloudSyncConfigured()) {
-            await Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 2500))]);
+            lastCloudPushAt = Date.now();
+            await Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 5000))]);
           }
           res.json({ ok: true, rev: getVaultRev() });
           return;
@@ -190,7 +193,9 @@ export function createApp() {
                     _vaultRev: nextRev,
                   };
                   if (isCloudSyncConfigured()) {
-                    void Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 2500))]).finally(() => {
+                    lastCloudPushAt = Date.now();
+                    void Promise.race([pushCloudVault(raw), new Promise((r) => setTimeout(r, 5000))]).finally(() => {
+                      lastCloudPushAt = Date.now();
                       origJson(payload);
                     });
                     return res;
