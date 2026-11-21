@@ -1208,6 +1208,7 @@ apiRouter.patch('/bots/:id', async (req, res) => {
   const nextStatus = ['connected', 'disconnected'].includes(status) ? status : bot.connection_status;
   const syncTelegram = req.body?.sync_telegram !== false;
   const forceSync = Boolean(req.body?.force_sync);
+  const rawMenuButton = req.body?.menu_button;
 
   if (!name) {
     res.status(400).json({ error: 'Bot name cannot be empty.' });
@@ -1226,6 +1227,22 @@ apiRouter.patch('/bots/:id', async (req, res) => {
     return;
   }
 
+  let validatedMenuButton: { type: 'default' | 'commands' | 'web_app'; text?: string; url?: string } | null = null;
+  if (rawMenuButton && typeof rawMenuButton === 'object') {
+    const mb = rawMenuButton as { type?: string; text?: string; url?: string };
+    const rawType = String(mb.type ?? 'web_app').trim() as 'default' | 'commands' | 'web_app';
+    const validation = validateMenuButtonInput({
+      type: rawType,
+      text: typeof mb.text === 'string' ? mb.text : undefined,
+      url: typeof mb.url === 'string' ? mb.url : undefined,
+    });
+    if (!validation.valid || !validation.normalized) {
+      res.status(400).json({ error: validation.error || 'Invalid Web App menu button settings.' });
+      return;
+    }
+    validatedMenuButton = validation.normalized;
+  }
+
   let savedName = bot.name;
   let savedShort = bot.short_description || '';
   let savedDescription = bot.description || '';
@@ -1234,7 +1251,7 @@ apiRouter.patch('/bots/:id', async (req, res) => {
     let outcome = await executeBotMethod(bot, method, params);
     if (!outcome.ok && outcome.errorCode === 429) {
       const retrySec = Number((outcome.rawResponse?.parameters as { retry_after?: number } | undefined)?.retry_after || 0);
-      if (retrySec > 0 && retrySec <= 2) {
+      if (retrySec > 0 && retrySec <= 5) {
         await new Promise((r) => setTimeout(r, retrySec * 1000 + 150));
         outcome = await executeBotMethod(bot, method, params);
       }
@@ -1244,58 +1261,85 @@ apiRouter.patch('/bots/:id', async (req, res) => {
 
   const syncedMethods: string[] = [];
   if (syncTelegram) {
-    if (name !== bot.name || forceSync) {
-      const r = await callTelegramProfileMethod('setMyName', { name });
-      if (!r.ok) {
-        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
-          error: `Telegram setMyName failed: ${r.description || 'Unknown error'}`,
-          bot: sanitizeBotForClient(getBotById(bot.id)!),
-        });
-        return;
-      }
-      savedName = name;
-      syncedMethods.push('setMyName');
-    }
+    type SyncTask = {
+      key: 'name' | 'short' | 'description' | 'menu_button';
+      method: string;
+      promise: Promise<Awaited<ReturnType<typeof callTelegramProfileMethod>>>;
+    };
+    const tasks: SyncTask[] = [];
 
+    if (name !== bot.name || Boolean(req.body?.force_name_sync)) {
+      tasks.push({
+        key: 'name',
+        method: 'setMyName',
+        promise: callTelegramProfileMethod('setMyName', { name }),
+      });
+    }
     if (shortDesc !== (bot.short_description || '') || forceSync) {
-      const r = await callTelegramProfileMethod('setMyShortDescription', { short_description: shortDesc });
-      if (!r.ok) {
-        db.prepare(`
-          UPDATE bots
-          SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
-          WHERE id = ?
-        `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
-        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
-          error: `Telegram setMyShortDescription failed: ${r.description || 'Unknown error'}`,
-          bot: sanitizeBotForClient(getBotById(bot.id)!),
-        });
-        return;
-      }
-      savedShort = shortDesc;
-      syncedMethods.push('setMyShortDescription');
+      tasks.push({
+        key: 'short',
+        method: 'setMyShortDescription',
+        promise: callTelegramProfileMethod('setMyShortDescription', { short_description: shortDesc }),
+      });
+    }
+    if (description !== (bot.description || '') || forceSync) {
+      tasks.push({
+        key: 'description',
+        method: 'setMyDescription',
+        promise: callTelegramProfileMethod('setMyDescription', { description }),
+      });
+    }
+    if (validatedMenuButton) {
+      const telegramPayload =
+        validatedMenuButton.type === 'web_app'
+          ? { type: 'web_app', text: validatedMenuButton.text || 'Open', web_app: { url: validatedMenuButton.url } }
+          : { type: validatedMenuButton.type };
+      tasks.push({
+        key: 'menu_button',
+        method: 'setChatMenuButton',
+        promise: callTelegramProfileMethod('setChatMenuButton', { menu_button: telegramPayload }),
+      });
     }
 
-    if (description !== (bot.description || '') || forceSync) {
-      const r = await callTelegramProfileMethod('setMyDescription', { description });
+    const outcomes = await Promise.all(tasks.map((t) => t.promise));
+    const failures: Array<{ method: string; outcome: Awaited<ReturnType<typeof callTelegramProfileMethod>> }> = [];
+
+    outcomes.forEach((r, idx) => {
+      const task = tasks[idx];
       if (!r.ok) {
-        db.prepare(`
-          UPDATE bots
-          SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
-          WHERE id = ?
-        `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
-        res.status(r.httpStatus >= 400 ? r.httpStatus : 502).json({
-          error: `Telegram setMyDescription failed: ${r.description || 'Unknown error'}`,
-          bot: sanitizeBotForClient(getBotById(bot.id)!),
-        });
+        failures.push({ method: task.method, outcome: r });
         return;
       }
-      savedDescription = description;
-      syncedMethods.push('setMyDescription');
+      syncedMethods.push(task.method);
+      if (task.key === 'name') savedName = name;
+      else if (task.key === 'short') savedShort = shortDesc;
+      else if (task.key === 'description') savedDescription = description;
+      else if (task.key === 'menu_button' && validatedMenuButton) {
+        setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(validatedMenuButton));
+      }
+    });
+
+    if (failures.length > 0) {
+      db.prepare(`
+        UPDATE bots
+        SET name = ?, short_description = ?, description = ?, connection_status = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
+      const firstFail = failures[0];
+      res.status(firstFail.outcome.httpStatus >= 400 ? firstFail.outcome.httpStatus : 502).json({
+        error: `Telegram ${firstFail.method} failed: ${firstFail.outcome.description || 'Unknown error'}`,
+        syncedMethods,
+        bot: sanitizeBotForClient(getBotById(bot.id)!),
+      });
+      return;
     }
   } else {
     savedName = name;
     savedShort = shortDesc;
     savedDescription = description;
+    if (validatedMenuButton) {
+      setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(validatedMenuButton));
+    }
   }
 
   db.prepare(`

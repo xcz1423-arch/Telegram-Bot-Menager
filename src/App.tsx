@@ -23,8 +23,8 @@ const SKIP_SMALL_CAPS_TAGS = new Set(['INPUT', 'TEXTAREA', 'CODE', 'PRE', 'SCRIP
 
 function useGlobalSmallCaps() {
   useEffect(() => {
-    const root = document.getElementById('root');
-    if (!root) return;
+    const targetRoot = document.body;
+    if (!targetRoot) return;
 
     const shouldSkipNode = (node: Node): boolean => {
       let el = node.parentElement;
@@ -68,7 +68,7 @@ function useGlobalSmallCaps() {
       }
     };
 
-    applyToTree(root);
+    applyToTree(targetRoot);
     if (document.title && /[A-Za-z]/.test(document.title)) {
       const nextTitle = toSmallCaps(document.title);
       if (nextTitle !== document.title) {
@@ -76,34 +76,23 @@ function useGlobalSmallCaps() {
       }
     }
 
-    const pendingNodes = new Set<Node>();
-    let rafId = 0;
-
-    const flush = () => {
-      rafId = 0;
-      const nodes = Array.from(pendingNodes);
-      pendingNodes.clear();
-      for (const node of nodes) {
-        if (node.isConnected) {
-          applyToTree(node);
-        }
-      }
-    };
-
     const observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
         if (m.type === 'characterData') {
-          pendingNodes.add(m.target);
+          if (m.target.isConnected) {
+            applyToTree(m.target);
+          }
         } else if (m.type === 'childList') {
-          m.addedNodes.forEach((n) => pendingNodes.add(n));
+          m.addedNodes.forEach((n) => {
+            if (n.isConnected) {
+              applyToTree(n);
+            }
+          });
         }
-      }
-      if (pendingNodes.size > 0 && !rafId) {
-        rafId = requestAnimationFrame(flush);
       }
     });
 
-    observer.observe(root, {
+    observer.observe(targetRoot, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -111,7 +100,6 @@ function useGlobalSmallCaps() {
 
     return () => {
       observer.disconnect();
-      if (rafId) cancelAnimationFrame(rafId);
     };
   }, []);
 }

@@ -378,7 +378,7 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
   const delDescPhotoJson = (await delDescPhotoRes.json()) as { bot: { description_photo_url: string | null } };
   assert.equal(delDescPhotoJson.bot.description_photo_url, null);
 
-  // 13. Single-save bot profile (name + bio + description) & profile-photo persistence + delete
+  // 13. Single-save bot profile (name + bio + description + menu_button) & profile-photo persistence + delete
   const patchRes = await fetch(`${baseUrl}/api/bots/${targetBotId}`, {
     method: 'PATCH',
     headers: {
@@ -391,18 +391,30 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
       short_description: 'Instant Bio Sync',
       description: 'Updated What Can This Bot Do Text',
       sync_telegram: true,
+      force_sync: true,
+      menu_button: { type: 'web_app', text: 'Launch', url: 'https://panel.example.com/v2' },
     }),
   });
   assert.equal(patchRes.status, 200);
   const patchJson = (await patchRes.json()) as {
     ok: boolean;
     syncedMethods: string[];
-    bot: { name: string; short_description: string; description: string };
+    bot: {
+      name: string;
+      short_description: string;
+      description: string;
+      menu_button: { type: string; text?: string; url?: string } | null;
+    };
   };
   assert.equal(patchJson.ok, true);
   assert.equal(patchJson.bot.name, 'First Save Name');
   assert.equal(patchJson.bot.short_description, 'Instant Bio Sync');
   assert.equal(patchJson.bot.description, 'Updated What Can This Bot Do Text');
+  assert.equal(patchJson.bot.menu_button?.url, 'https://panel.example.com/v2');
+  assert.ok(patchJson.syncedMethods.includes('setMyName'));
+  assert.ok(patchJson.syncedMethods.includes('setMyShortDescription'));
+  assert.ok(patchJson.syncedMethods.includes('setMyDescription'));
+  assert.ok(patchJson.syncedMethods.includes('setChatMenuButton'));
 
   const SAMPLE_JPEG =
     'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';

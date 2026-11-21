@@ -199,11 +199,21 @@ function TelegramIntroPreviewCard({
               </div>
             </div>
           )}
-          <div className="p-3.5 space-y-1">
-            <div className="text-xs font-semibold text-[#171A2B] dark:text-slate-100">What can this bot do?</div>
-            <p data-no-smallcaps="true" className="text-xs text-[#73798C] dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
-              {bot.description?.trim() || bot.short_description?.trim() || 'No description text configured yet.'}
-            </p>
+          <div className="p-3.5 space-y-2">
+            {bot.short_description?.trim() && (
+              <div className="pb-2 border-b border-[#E8EAF1] dark:border-slate-800/80 space-y-0.5">
+                <div className="text-[11px] font-semibold text-[#73798C] dark:text-slate-400">About / Bio</div>
+                <p data-no-smallcaps="true" className="text-xs text-[#171A2B] dark:text-slate-200 leading-relaxed whitespace-pre-wrap break-words">
+                  {bot.short_description.trim()}
+                </p>
+              </div>
+            )}
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-[#171A2B] dark:text-slate-100">What can this bot do?</div>
+              <p data-no-smallcaps="true" className="text-xs text-[#73798C] dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
+                {bot.description?.trim() || 'No description text configured yet.'}
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -566,6 +576,27 @@ export function BotsView({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBot) return;
+
+    const currentMenuUrl = selectedBot.menu_button?.url || '';
+    const currentMenuText = selectedBot.menu_button?.text || 'Open';
+    const nextMenuUrl = menuButtonUrl.trim();
+    const nextMenuText = menuButtonText.trim() || 'Open';
+    const menuChanged =
+      nextMenuUrl !== currentMenuUrl || (Boolean(nextMenuUrl) && nextMenuText !== currentMenuText);
+
+    let menuPayload: { type: 'default' | 'web_app'; text?: string; url?: string } | undefined;
+    if (menuChanged) {
+      if (nextMenuUrl) {
+        if (!/^https:\/\/.+/i.test(nextMenuUrl)) {
+          onToast('error', 'Web App Link Failed', 'Telegram Web App URL must start with https://');
+          return;
+        }
+        menuPayload = { type: 'web_app', text: nextMenuText, url: nextMenuUrl };
+      } else if (currentMenuUrl) {
+        menuPayload = { type: 'default' };
+      }
+    }
+
     setBusyAction('save');
     try {
       const res = await apiFetch<{ ok: boolean; syncedMethods?: string[]; bot: BotSummary }>(`/api/bots/${selectedBot.id}`, {
@@ -576,6 +607,8 @@ export function BotsView({
           description: editDescription,
           connection_status: editStatus,
           sync_telegram: syncTelegram,
+          force_sync: syncTelegram,
+          ...(menuPayload ? { menu_button: menuPayload } : {}),
         }),
       });
       if (res.bot) {
@@ -584,6 +617,8 @@ export function BotsView({
         setEditShort(res.bot.short_description || '');
         setEditDescription(res.bot.description || '');
         setEditStatus(res.bot.connection_status === 'disconnected' ? 'disconnected' : 'connected');
+        setMenuButtonText(res.bot.menu_button?.text || 'Open');
+        setMenuButtonUrl(res.bot.menu_button?.url || '');
       } else {
         onRefresh();
       }
