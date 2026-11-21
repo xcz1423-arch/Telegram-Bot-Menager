@@ -36,37 +36,71 @@ function useGlobalSmallCaps() {
       return false;
     };
 
+    const convertTextNode = (textNode: Node) => {
+      if (shouldSkipNode(textNode)) return;
+      const raw = textNode.nodeValue;
+      if (raw && /[A-Za-z]/.test(raw)) {
+        const converted = toSmallCaps(raw);
+        if (converted !== raw) {
+          textNode.nodeValue = converted;
+        }
+      }
+    };
+
     const applyToTree = (target: Node) => {
+      if (target.nodeType === Node.TEXT_NODE) {
+        convertTextNode(target);
+        return;
+      }
+      if (target.nodeType !== Node.ELEMENT_NODE && target.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+        return;
+      }
+      if (target instanceof HTMLElement) {
+        if (SKIP_SMALL_CAPS_TAGS.has(target.tagName) || target.getAttribute('data-no-smallcaps') === 'true') {
+          return;
+        }
+      }
       const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
       let current: Node | null = walker.nextNode();
       while (current) {
-        if (!shouldSkipNode(current)) {
-          const raw = current.nodeValue;
-          if (raw && /[A-Za-z]/.test(raw)) {
-            const converted = toSmallCaps(raw);
-            if (converted !== raw) {
-              current.nodeValue = converted;
-            }
-          }
-        }
+        convertTextNode(current);
         current = walker.nextNode();
       }
     };
 
     applyToTree(root);
+    if (document.title && /[A-Za-z]/.test(document.title)) {
+      const nextTitle = toSmallCaps(document.title);
+      if (nextTitle !== document.title) {
+        document.title = nextTitle;
+      }
+    }
 
+    const pendingNodes = new Set<Node>();
     let rafId = 0;
-    const observer = new MutationObserver(() => {
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        applyToTree(root);
-        if (document.title && /[A-Za-z]/.test(document.title)) {
-          const nextTitle = toSmallCaps(document.title);
-          if (nextTitle !== document.title) {
-            document.title = nextTitle;
-          }
+
+    const flush = () => {
+      rafId = 0;
+      const nodes = Array.from(pendingNodes);
+      pendingNodes.clear();
+      for (const node of nodes) {
+        if (node.isConnected) {
+          applyToTree(node);
         }
-      });
+      }
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'characterData') {
+          pendingNodes.add(m.target);
+        } else if (m.type === 'childList') {
+          m.addedNodes.forEach((n) => pendingNodes.add(n));
+        }
+      }
+      if (pendingNodes.size > 0 && !rafId) {
+        rafId = requestAnimationFrame(flush);
+      }
     });
 
     observer.observe(root, {

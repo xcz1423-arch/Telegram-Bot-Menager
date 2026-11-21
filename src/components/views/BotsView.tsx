@@ -15,6 +15,11 @@ import {
   Sliders,
   ShieldCheck,
   Activity,
+  Image as ImageIcon,
+  Link2,
+  Download,
+  ExternalLink,
+  RotateCcw,
 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
 import type { BotSummary, NavTab } from '../../types';
@@ -55,6 +60,54 @@ async function prepareBotAvatarJpegs(file: File): Promise<{ uploadDataUrl: strin
   }
 }
 
+async function prepareDescriptionBannerJpeg(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Failed to decode selected image.'));
+      el.src = objectUrl;
+    });
+
+    const targetW = 640;
+    const targetH = 360;
+    const targetRatio = targetW / targetH;
+    const srcW = img.naturalWidth || img.width;
+    const srcH = img.naturalHeight || img.height;
+    const srcRatio = srcW / Math.max(1, srcH);
+
+    let sx = 0;
+    let sy = 0;
+    let sw = srcW;
+    let sh = srcH;
+    if (srcRatio > targetRatio) {
+      sw = Math.floor(srcH * targetRatio);
+      sx = Math.floor((srcW - sw) / 2);
+    } else if (srcRatio < targetRatio) {
+      sh = Math.floor(srcW / targetRatio);
+      sy = Math.floor((srcH - sh) / 2);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context unavailable.');
+    ctx.fillStyle = '#0B0F1A';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+    let dataUrl = canvas.toDataURL('image/jpeg', 0.86);
+    if (dataUrl.length > 220_000) {
+      dataUrl = canvas.toDataURL('image/jpeg', 0.74);
+    }
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function BotAvatarBadge({ bot, size = 'md' }: { bot: BotSummary; size?: 'sm' | 'md' | 'lg' }) {
   const dim = size === 'sm' ? 'w-9 h-9 text-xs' : size === 'lg' ? 'w-16 h-16 text-lg' : 'w-11 h-11 text-sm';
   const initials = (bot.name || bot.username || 'B')
@@ -78,6 +131,104 @@ function BotAvatarBadge({ bot, size = 'md' }: { bot: BotSummary; size?: 'sm' | '
       className={`${dim} rounded-full bg-[#6555E8]/12 dark:bg-[#7565F6]/20 text-[#6555E8] dark:text-[#988DF9] font-display font-bold flex items-center justify-center border border-[#7565F6]/25 shrink-0`}
     >
       {initials || 'B'}
+    </div>
+  );
+}
+
+function TelegramIntroPreviewCard({
+  bot,
+  onEditClick,
+}: {
+  bot: BotSummary;
+  onEditClick?: () => void;
+}) {
+  const menuBtn = bot.menu_button;
+  const isWebApp = menuBtn?.type === 'web_app' && Boolean(menuBtn.url);
+  const buttonLabel = isWebApp ? menuBtn?.text || 'Open' : menuBtn?.type === 'commands' ? 'Menu' : 'Default';
+
+  return (
+    <div className="rounded-2xl border border-[#E8EAF1] dark:border-slate-800 bg-[#F6F7FB] dark:bg-[#101421] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#E8EAF1] dark:border-slate-800/80 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <BotAvatarBadge bot={bot} size="sm" />
+          <div className="min-w-0">
+            <div data-no-smallcaps="true" className="text-xs font-semibold truncate">
+              {bot.name}
+            </div>
+            <div data-no-smallcaps="true" className="text-[11px] font-mono text-[#73798C] dark:text-slate-400 truncate">
+              @{bot.username}
+            </div>
+          </div>
+        </div>
+        {onEditClick && (
+          <button
+            type="button"
+            onClick={onEditClick}
+            className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-[#6555E8] dark:text-[#A599FF] bg-[#6555E8]/10 dark:bg-[#7565F6]/15 hover:bg-[#6555E8]/18 transition-colors shrink-0"
+          >
+            Edit Intro & Web Link
+          </button>
+        )}
+      </div>
+
+      <div className="p-4 flex flex-col items-center">
+        <div className="w-full max-w-sm rounded-2xl overflow-hidden border border-[#E2E6F2] dark:border-slate-800 bg-white dark:bg-[#151B2B] shadow-sm">
+          {bot.description_photo_url ? (
+            <img
+              src={bot.description_photo_url}
+              alt={`${bot.name} What can this bot do banner`}
+              className="w-full aspect-video object-cover bg-slate-900"
+            />
+          ) : (
+            <div className="w-full aspect-video bg-gradient-to-br from-[#6555E8]/12 via-[#22C8F6]/8 to-transparent dark:from-[#7565F6]/18 dark:via-[#22C8F6]/10 flex flex-col items-center justify-center text-center px-4">
+              <ImageIcon className="w-6 h-6 text-[#73798C] dark:text-slate-500 mb-1.5" />
+              <div className="text-xs font-medium text-[#73798C] dark:text-slate-400">
+                No &ldquo;What can this bot do?&rdquo; Picture Set
+              </div>
+              <div className="text-[10px] text-[#73798C] dark:text-slate-500 mt-0.5">
+                Upload a 640×360 banner in Edit Profile
+              </div>
+            </div>
+          )}
+          <div className="p-3.5 space-y-1">
+            <div className="text-xs font-semibold text-[#171A2B] dark:text-slate-100">What can this bot do?</div>
+            <p data-no-smallcaps="true" className="text-xs text-[#73798C] dark:text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
+              {bot.description?.trim() || bot.short_description?.trim() || 'No description text configured yet.'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 py-2.5 border-t border-[#E8EAF1] dark:border-slate-800/80 bg-white/70 dark:bg-[#101421] flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1.5 shrink-0 ${
+              isWebApp
+                ? 'bg-[#20C997]/15 text-[#118A66] dark:text-[#20C997] border border-[#20C997]/30'
+                : 'bg-slate-200/70 dark:bg-slate-800 text-[#73798C] dark:text-slate-300'
+            }`}
+          >
+            <Link2 className="w-3 h-3" />
+            <span data-no-smallcaps="true">{buttonLabel}</span>
+          </span>
+          {isWebApp && menuBtn?.url ? (
+            <a
+              href={menuBtn.url}
+              target="_blank"
+              rel="noreferrer"
+              data-no-smallcaps="true"
+              className="font-mono text-[11px] text-[#6555E8] dark:text-[#A599FF] hover:underline truncate inline-flex items-center gap-1 min-w-0"
+            >
+              <span className="truncate">{menuBtn.url}</span>
+              <ExternalLink className="w-3 h-3 shrink-0" />
+            </a>
+          ) : (
+            <span className="text-[11px] text-[#73798C] dark:text-slate-400 truncate">
+              {menuBtn?.type === 'commands' ? 'Showing bot commands menu' : 'No Web App link configured yet'}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -315,7 +466,10 @@ export function BotsView({
   const [protectContent, setProtectContent] = useState(Boolean(selectedBot?.settings?.protect_content));
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BotSummary | null>(null);
+  const [menuButtonText, setMenuButtonText] = useState(selectedBot?.menu_button?.text || 'Open');
+  const [menuButtonUrl, setMenuButtonUrl] = useState(selectedBot?.menu_button?.url || '');
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const descBannerInputRef = useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
     if (selectedBot) {
@@ -326,6 +480,8 @@ export function BotsView({
       setParseMode(selectedBot.settings?.default_parse_mode || 'HTML');
       setDisableNotif(Boolean(selectedBot.settings?.disable_notification));
       setProtectContent(Boolean(selectedBot.settings?.protect_content));
+      setMenuButtonText(selectedBot.menu_button?.text || 'Open');
+      setMenuButtonUrl(selectedBot.menu_button?.url || '');
     }
   }, [
     selectedBot?.id,
@@ -333,6 +489,8 @@ export function BotsView({
     selectedBot?.short_description,
     selectedBot?.description,
     selectedBot?.connection_status,
+    selectedBot?.menu_button?.text,
+    selectedBot?.menu_button?.url,
   ]);
 
   const handleTestConnection = async (bot: BotSummary) => {
@@ -451,6 +609,129 @@ export function BotsView({
       onRefresh();
     } catch (err) {
       onToast('error', 'Remove Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleDescBannerSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !selectedBot) return;
+    if (!file.type.startsWith('image/')) {
+      onToast('error', 'Invalid File', 'Please select a PNG, JPG, or WebP image file.');
+      return;
+    }
+    setBusyAction('desc_banner');
+    try {
+      const bannerDataUrl = await prepareDescriptionBannerJpeg(file);
+      await apiFetch<{ ok: boolean; bot: BotSummary }>(`/api/bots/${selectedBot.id}/description-photo`, {
+        method: 'POST',
+        body: JSON.stringify({ imageDataUrl: bannerDataUrl }),
+      });
+      onToast(
+        'success',
+        'Description Picture Saved',
+        '640×360 banner updated in preview. You can also download it for @BotFather (/setdescriptionpic).'
+      );
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Banner Upload Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleRemoveDescBanner = async () => {
+    if (!selectedBot) return;
+    setBusyAction('remove_desc_banner');
+    try {
+      await apiFetch(`/api/bots/${selectedBot.id}/description-photo`, { method: 'DELETE' });
+      onToast('info', 'Description Picture Removed', `Cleared 640×360 banner for @${selectedBot.username}.`);
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Remove Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleDownloadDescBanner = () => {
+    if (!selectedBot?.description_photo_url) return;
+    const a = document.createElement('a');
+    a.href = selectedBot.description_photo_url;
+    a.download = `${selectedBot.username}_description_640x360.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const handleSaveMenuButton = async () => {
+    if (!selectedBot) return;
+    setBusyAction('menu_button');
+    try {
+      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string } }>(
+        `/api/bots/${selectedBot.id}/menu-button`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            type: 'web_app',
+            text: menuButtonText.trim() || 'Open',
+            url: menuButtonUrl.trim(),
+          }),
+        }
+      );
+      onToast(
+        'success',
+        'Web App Link Updated',
+        `Menu button "${res.menu_button.text || 'Open'}" synced via setChatMenuButton.`
+      );
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Web App Link Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handlePullMenuButton = async () => {
+    if (!selectedBot) return;
+    setBusyAction('pull_menu_button');
+    try {
+      const res = await apiFetch<{ ok: boolean; menu_button: { type: string; text?: string; url?: string } }>(
+        `/api/bots/${selectedBot.id}/menu-button`
+      );
+      setMenuButtonText(res.menu_button?.text || 'Open');
+      setMenuButtonUrl(res.menu_button?.url || '');
+      onToast(
+        'success',
+        'Web App Link Synced',
+        res.menu_button?.type === 'web_app' && res.menu_button.url
+          ? `Current link: ${res.menu_button.url}`
+          : `Menu mode is currently "${res.menu_button?.type || 'default'}".`
+      );
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Pull Link Failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleResetMenuButton = async () => {
+    if (!selectedBot) return;
+    setBusyAction('reset_menu_button');
+    try {
+      await apiFetch(`/api/bots/${selectedBot.id}/menu-button`, {
+        method: 'PUT',
+        body: JSON.stringify({ type: 'default' }),
+      });
+      setMenuButtonText('Open');
+      setMenuButtonUrl('');
+      onToast('info', 'Menu Button Reset', `Restored default Telegram menu button for @${selectedBot.username}.`);
+      onRefresh();
+    } catch (err) {
+      onToast('error', 'Reset Failed', err instanceof Error ? err.message : undefined);
     } finally {
       setBusyAction(null);
     }
@@ -670,6 +951,8 @@ export function BotsView({
                 </div>
               </div>
 
+              <TelegramIntroPreviewCard bot={selectedBot} onEditClick={() => setSubTab('edit')} />
+
               <div>
                 <h3 className="text-xs font-semibold text-[#73798C] dark:text-slate-400 mb-2.5">
                   Operate <span data-no-smallcaps="true">@{selectedBot.username}</span>
@@ -705,17 +988,18 @@ export function BotsView({
           )}
 
           {subTab === 'edit' && (
-            <form onSubmit={handleSaveProfile} className="space-y-4 max-w-lg">
-              <div className="p-4 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <BotAvatarBadge bot={selectedBot} size="lg" />
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold">Bot Profile Picture</div>
-                    <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
-                      Square JPEG synced via Telegram <code className="font-mono">setMyProfilePhoto</code>.
-                    </p>
+            <div className="space-y-5 max-w-2xl">
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div className="p-4 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <BotAvatarBadge bot={selectedBot} size="lg" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold">Bot Profile Picture</div>
+                      <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
+                        Auto-fetched from Telegram on connect/pull and synced via <code className="font-mono">setMyProfilePhoto</code>.
+                      </p>
+                    </div>
                   </div>
-                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     ref={photoInputRef}
@@ -853,6 +1137,177 @@ export function BotsView({
                 </button>
               </div>
             </form>
+
+            {/* "What can this bot do?" 640x360 Description Picture */}
+            <div className="p-4 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-[#7565F6]" />
+                    <span>&ldquo;What can this bot do?&rdquo; Picture (640×360 Banner)</span>
+                  </h3>
+                  <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
+                    View and update the empty-chat intro banner. Automatically cropped &amp; resized to Telegram&apos;s exact 640×360 spec.
+                  </p>
+                </div>
+                <input
+                  ref={descBannerInputRef}
+                  type="file"
+                  accept="image/*"
+                  aria-label="Upload What can this bot do banner picture"
+                  onChange={handleDescBannerSelected}
+                  className="hidden"
+                />
+              </div>
+
+              {selectedBot.description_photo_url ? (
+                <div className="rounded-xl overflow-hidden border border-[#E8EAF1] dark:border-slate-800 bg-slate-950 max-w-md">
+                  <img
+                    src={selectedBot.description_photo_url}
+                    alt={`${selectedBot.name} description banner`}
+                    className="w-full aspect-video object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-[#D3D8EB] dark:border-slate-700 p-5 text-center max-w-md">
+                  <ImageIcon className="w-6 h-6 mx-auto text-[#73798C] dark:text-slate-500 mb-1" />
+                  <div className="text-xs font-medium text-[#73798C] dark:text-slate-400">No description banner uploaded yet</div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => descBannerInputRef.current?.click()}
+                  className="px-3 py-2 min-h-[38px] rounded-xl bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] text-white text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>{busyAction === 'desc_banner' ? 'Saving 640×360...' : selectedBot.description_photo_url ? 'Change Banner' : 'Upload Banner'}</span>
+                </button>
+                {selectedBot.description_photo_url && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleDownloadDescBanner}
+                      className="px-3 py-2 min-h-[38px] rounded-xl border border-[#E8EAF1] dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium inline-flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download 640×360 for @BotFather</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={handleRemoveDescBanner}
+                      className="px-3 py-2 min-h-[38px] rounded-xl border border-[#F05B75]/30 text-[#F05B75] hover:bg-[#F05B75]/10 text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{busyAction === 'remove_desc_banner' ? 'Removing...' : 'Remove Banner'}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <p className="text-[11px] text-[#73798C] dark:text-slate-400 leading-relaxed">
+                Note: Telegram restricts uploading the empty-chat description photo exclusively to <span data-no-smallcaps="true" className="font-mono">@BotFather</span> (<code className="font-mono">/setdescriptionpic</code>). Saving here previews your 640×360 banner and lets you export it ready for <span data-no-smallcaps="true" className="font-mono">@BotFather</span>.
+              </p>
+            </div>
+
+            {/* Bot Web App Link (Open Menu Button via getChatMenuButton / setChatMenuButton) */}
+            <div className="p-4 rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5 text-[#20C997]" />
+                    <span>Bot Web App Link (Open Menu Button)</span>
+                  </h3>
+                  <p className="text-[11px] text-[#73798C] dark:text-slate-400 mt-0.5">
+                    View and update the bottom-left Web App button shown inside Telegram chats (<code className="font-mono">setChatMenuButton</code>).
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-white/80 dark:bg-[#151B2B]/80 border border-[#E8EAF1] dark:border-slate-800 text-xs flex flex-wrap items-center gap-2">
+                <span className="text-[#73798C] dark:text-slate-400">Current Link:</span>
+                {selectedBot.menu_button?.type === 'web_app' && selectedBot.menu_button.url ? (
+                  <a
+                    href={selectedBot.menu_button.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-no-smallcaps="true"
+                    className="font-mono text-[#6555E8] dark:text-[#A599FF] hover:underline break-all inline-flex items-center gap-1"
+                  >
+                    <span>{selectedBot.menu_button.url}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                ) : (
+                  <span className="font-mono text-[#73798C] dark:text-slate-400">
+                    {selectedBot.menu_button?.type === 'commands' ? 'Commands Menu (no Web App link)' : 'Default (no Web App link set)'}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label htmlFor="edit-menu-btn-text" className="block text-xs font-medium mb-1">
+                    Button Text
+                  </label>
+                  <input
+                    id="edit-menu-btn-text"
+                    type="text"
+                    maxLength={64}
+                    value={menuButtonText}
+                    onChange={(e) => setMenuButtonText(e.target.value)}
+                    placeholder="Open"
+                    className="w-full px-3 py-2 min-h-[42px] text-sm rounded-xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="edit-menu-btn-url" className="block text-xs font-medium mb-1">
+                    Web App HTTPS URL
+                  </label>
+                  <input
+                    id="edit-menu-btn-url"
+                    type="url"
+                    value={menuButtonUrl}
+                    onChange={(e) => setMenuButtonUrl(e.target.value)}
+                    placeholder="https://your-webapp.example.com"
+                    className="w-full px-3 py-2 min-h-[42px] text-sm font-mono rounded-xl bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-[#7565F6]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={handleSaveMenuButton}
+                  className="px-3.5 py-2 min-h-[40px] rounded-xl bg-[#20C997] hover:bg-[#18b184] text-[#090B14] text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span>{busyAction === 'menu_button' ? 'Saving Link...' : 'Save Web App Link'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={handlePullMenuButton}
+                  className="px-3 py-2 min-h-[40px] rounded-xl border border-[#E8EAF1] dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${busyAction === 'pull_menu_button' ? 'animate-spin' : ''}`} />
+                  <span>Pull Current Link</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={handleResetMenuButton}
+                  className="px-3 py-2 min-h-[40px] rounded-xl border border-[#E8EAF1] dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset to Default</span>
+                </button>
+              </div>
+            </div>
+          </div>
           )}
 
           {subTab === 'settings' && (

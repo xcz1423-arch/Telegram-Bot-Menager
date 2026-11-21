@@ -55,6 +55,12 @@ export interface AdminAuditEntry {
   created_at: string;
 }
 
+export interface BotMenuButtonConfig {
+  type: 'default' | 'commands' | 'web_app';
+  text?: string;
+  url?: string;
+}
+
 export interface BotSummary {
   id: number;
   bot_key: string;
@@ -69,6 +75,8 @@ export interface BotSummary {
   webhook_status: 'active' | 'inactive' | 'error';
   webhook_url: string | null;
   avatar_url?: string | null;
+  description_photo_url?: string | null;
+  menu_button?: BotMenuButtonConfig | null;
   has_webhook_secret: boolean;
   pending_update_count: number;
   last_webhook_error: string | null;

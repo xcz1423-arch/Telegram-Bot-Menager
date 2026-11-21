@@ -124,6 +124,42 @@ export const TELEGRAM_API_METHODS: ApiMethodDef[] = [
     httpMethod: 'POST',
     params: [],
   },
+  {
+    method: 'getUserProfilePhotos',
+    category: 'bot_info',
+    summary: "Fetch the bot's or user's current profile photos on Telegram.",
+    httpMethod: 'POST',
+    params: [
+      { name: 'user_id', type: 'number', required: true, description: 'Unique identifier of the target user or bot', placeholder: '123456789' },
+      { name: 'offset', type: 'number', description: 'Sequential number of the first photo to be returned', defaultValue: 0 },
+      { name: 'limit', type: 'number', description: 'Limits the number of photos to be retrieved (1-100)', defaultValue: 1 },
+    ],
+  },
+  {
+    method: 'getChatMenuButton',
+    category: 'bot_info',
+    summary: "Get the current value of the bot's menu button (Web App link, commands, or default).",
+    httpMethod: 'POST',
+    params: [
+      { name: 'chat_id', type: 'number', description: 'Optional private chat_id; omit for default menu button' },
+    ],
+  },
+  {
+    method: 'setChatMenuButton',
+    category: 'bot_info',
+    summary: "Change the bot's menu button (set an HTTPS Web App Open link, commands list, or default).",
+    httpMethod: 'POST',
+    params: [
+      { name: 'chat_id', type: 'number', description: 'Optional private chat_id; omit to update default for all chats' },
+      {
+        name: 'menu_button',
+        type: 'json',
+        required: true,
+        description: 'MenuButton object (web_app, commands, or default)',
+        placeholder: '{"type":"web_app","text":"Open","web_app":{"url":"https://example.com"}}',
+      },
+    ],
+  },
   // B. Messaging
   {
     method: 'sendMessage',
@@ -610,5 +646,40 @@ export function parseRepeatAmount(raw: string): number | null {
   const num = Number.parseInt(trimmed, 10);
   if (!Number.isFinite(num) || num < 1) return null;
   return Math.min(MAX_REPEAT_AMOUNT, num);
+}
+
+export function validateMenuButtonInput(input: {
+  type: 'default' | 'commands' | 'web_app';
+  text?: string;
+  url?: string;
+}): {
+  valid: boolean;
+  error?: string;
+  normalized?: { type: 'default' | 'commands' | 'web_app'; text?: string; url?: string };
+} {
+  const type = input.type;
+  if (type === 'default' || type === 'commands') {
+    return { valid: true, normalized: { type } };
+  }
+  if (type !== 'web_app') {
+    return { valid: false, error: 'Unsupported menu button type.' };
+  }
+  const text = (input.text || 'Open').trim() || 'Open';
+  if (text.length > 64) {
+    return { valid: false, error: 'Menu button text must be 64 characters or fewer.' };
+  }
+  const url = (input.url || '').trim();
+  if (!url) {
+    return { valid: false, error: 'Web App HTTPS URL is required.' };
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      return { valid: false, error: 'Telegram Web App links must start with https://' };
+    }
+    return { valid: true, normalized: { type: 'web_app', text, url: parsed.toString() } };
+  } catch {
+    return { valid: false, error: 'Please enter a valid HTTPS URL for the Web App link.' };
+  }
 }
 

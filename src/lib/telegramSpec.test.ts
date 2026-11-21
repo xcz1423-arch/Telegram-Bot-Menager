@@ -91,12 +91,33 @@ test('JSON formatting and secret redaction', () => {
   assert.equal(safe.includes('[REDACTED_BOT_TOKEN]'), true);
 });
 
-test('TELEGRAM_API_METHODS exposes profile photo management methods', async () => {
+test('TELEGRAM_API_METHODS exposes profile photo and menu button methods', async () => {
   const { TELEGRAM_API_METHODS } = await import('./telegramSpec');
   const setPhoto = TELEGRAM_API_METHODS.find((m) => m.method === 'setMyProfilePhoto');
   const removePhoto = TELEGRAM_API_METHODS.find((m) => m.method === 'removeMyProfilePhoto');
+  const getPhotos = TELEGRAM_API_METHODS.find((m) => m.method === 'getUserProfilePhotos');
+  const getMenu = TELEGRAM_API_METHODS.find((m) => m.method === 'getChatMenuButton');
+  const setMenu = TELEGRAM_API_METHODS.find((m) => m.method === 'setChatMenuButton');
   assert.equal(setPhoto?.category, 'bot_info');
   assert.equal(removePhoto?.category, 'bot_info');
+  assert.equal(getPhotos?.category, 'bot_info');
+  assert.equal(getMenu?.category, 'bot_info');
+  assert.equal(setMenu?.category, 'bot_info');
+});
+
+test('validateMenuButtonInput requires valid HTTPS URL for web_app and allows default/commands', async () => {
+  const { validateMenuButtonInput } = await import('./telegramSpec');
+  const good = validateMenuButtonInput({ type: 'web_app', text: 'Open', url: 'https://xc.example.com/app' });
+  assert.equal(good.valid, true);
+  assert.equal(good.normalized?.text, 'Open');
+  assert.equal(good.normalized?.url, 'https://xc.example.com/app');
+
+  const httpRejected = validateMenuButtonInput({ type: 'web_app', text: 'Open', url: 'http://insecure.example.com' });
+  assert.equal(httpRejected.valid, false);
+
+  const def = validateMenuButtonInput({ type: 'default' });
+  assert.equal(def.valid, true);
+  assert.equal(def.normalized?.type, 'default');
 });
 
 test('sanitizeRepeatAmountInput allows clearing 1 and setting custom limits up to 1000', async () => {

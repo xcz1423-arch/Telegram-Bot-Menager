@@ -1,7 +1,7 @@
 import React from 'react';
 
-export const DARK_SKY_THEME_URL = '/assets/aistudio/xc_dark_sky_4k_3ae72507.png';
-export const LIGHT_THEME_URL = '/assets/aistudio/xc_light_theme_4k_5afe806c.png';
+export const DARK_SKY_THEME_URL = '/assets/aistudio/xc_dark_sky_opt.webp';
+export const LIGHT_THEME_URL = '/assets/aistudio/xc_light_theme_opt.webp';
 
 export function ThemeBackdrop({ variant = 'workspace' }: { variant?: 'auth' | 'workspace' }) {
   return (
@@ -21,7 +21,7 @@ export function ThemeBackdrop({ variant = 'workspace' }: { variant?: 'auth' | 'w
         className={`block dark:hidden absolute inset-0 ${
           variant === 'auth'
             ? 'bg-gradient-to-b from-white/10 via-transparent to-[#EEF1FC]/25'
-            : 'bg-white/22 backdrop-blur-[2px]'
+            : 'bg-white/24'
         }`}
       />
 
@@ -37,7 +37,7 @@ export function ThemeBackdrop({ variant = 'workspace' }: { variant?: 'auth' | 'w
         className={`hidden dark:block absolute inset-0 ${
           variant === 'auth'
             ? 'bg-gradient-to-b from-[#060714]/25 via-[#070918]/20 to-[#04050F]/55'
-            : 'bg-gradient-to-b from-[#060714]/45 via-[#080A1B]/40 to-[#050612]/60 backdrop-blur-[2px]'
+            : 'bg-gradient-to-b from-[#060714]/45 via-[#080A1B]/40 to-[#050612]/60'
         }`}
       />
     </div>

@@ -277,5 +277,105 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
     refreshBotsJson.bots.some((b) => b.username === 'temp_delete_verify'),
     false
   );
+
+  // 11. Standard user cannot change Console Brand Name (app_name) -> 403, while timezone works -> 200; Admin can change app_name -> 200
+  const userBrandAttempt = await fetch(`${baseUrl}/api/settings`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+    body: JSON.stringify({ app_name: 'HACKED BRAND', timezone: 'Asia/Dhaka' }),
+  });
+  assert.equal(userBrandAttempt.status, 403);
+
+  const userPrefsOk = await fetch(`${baseUrl}/api/settings`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+    body: JSON.stringify({ timezone: 'Asia/Dhaka', default_theme: 'dark' }),
+  });
+  assert.equal(userPrefsOk.status, 200);
+
+  const adminBrandOk = await fetch(`${baseUrl}/api/settings`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ app_name: 'XC PRO CONSOLE' }),
+  });
+  assert.equal(adminBrandOk.status, 200);
+
+  // 12. Bot description picture (640x360) and Web App menu button (Open link) endpoints persist & sync
+  const botsListRes = await fetch(`${baseUrl}/api/bots`, { headers: { Cookie: adminCookie } });
+  const botsListJson = (await botsListRes.json()) as { bots: Array<{ id: number }> };
+  const targetBotId = botsListJson.bots[0].id;
+
+  const descPhotoRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/description-photo`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ imageDataUrl: SAMPLE_AVATAR }),
+  });
+  assert.equal(descPhotoRes.status, 200);
+  const descPhotoJson = (await descPhotoRes.json()) as { bot: { description_photo_url: string | null } };
+  assert.equal(descPhotoJson.bot.description_photo_url, SAMPLE_AVATAR);
+
+  const badMenuRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/menu-button`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ type: 'web_app', text: 'Open', url: 'http://not-https.example.com' }),
+  });
+  assert.equal(badMenuRes.status, 400);
+
+  const setMenuRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/menu-button`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ type: 'web_app', text: 'Open', url: 'https://panel.example.com/app' }),
+  });
+  assert.equal(setMenuRes.status, 200);
+  const setMenuJson = (await setMenuRes.json()) as {
+    bot: { menu_button: { type: string; text?: string; url?: string } | null };
+  };
+  assert.equal(setMenuJson.bot.menu_button?.type, 'web_app');
+  assert.equal(setMenuJson.bot.menu_button?.text, 'Open');
+  assert.equal(setMenuJson.bot.menu_button?.url, 'https://panel.example.com/app');
+
+  const getMenuRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/menu-button`, {
+    headers: { Cookie: adminCookie },
+  });
+  assert.equal(getMenuRes.status, 200);
+  const getMenuJson = (await getMenuRes.json()) as {
+    menu_button: { type: string; text?: string; url?: string };
+  };
+  assert.equal(getMenuJson.menu_button.url, 'https://panel.example.com/app');
+
+  const delDescPhotoRes = await fetch(`${baseUrl}/api/bots/${targetBotId}/description-photo`, {
+    method: 'DELETE',
+    headers: {
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+  });
+  assert.equal(delDescPhotoRes.status, 200);
+  const delDescPhotoJson = (await delDescPhotoRes.json()) as { bot: { description_photo_url: string | null } };
+  assert.equal(delDescPhotoJson.bot.description_photo_url, null);
 });
 

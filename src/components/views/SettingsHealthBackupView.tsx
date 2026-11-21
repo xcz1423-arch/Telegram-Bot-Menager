@@ -312,17 +312,23 @@ export function SettingsHealthBackupView({
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch('/api/settings', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        app_name: localAppName,
-        default_theme: theme,
-        timezone,
-        date_format: dateFormat,
-      }),
-    });
-    onAppNameChange(localAppName);
-    onToast('success', 'Settings Saved', 'Application preferences persisted.');
+    try {
+      await apiFetch('/api/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...(isAdmin ? { app_name: localAppName } : {}),
+          default_theme: theme,
+          timezone,
+          date_format: dateFormat,
+        }),
+      });
+      if (isAdmin) {
+        onAppNameChange(localAppName);
+      }
+      onToast('success', 'Settings Saved', 'Application preferences persisted.');
+    } catch (err) {
+      onToast('error', 'Save Failed', err instanceof Error ? err.message : undefined);
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -809,15 +815,17 @@ export function SettingsHealthBackupView({
           className="bg-white dark:bg-[#151B2B] border border-[#E8EAF1] dark:border-slate-800 rounded-2xl p-5 space-y-4 max-w-xl"
         >
           <h2 className="text-sm font-semibold">Application & Theme Preferences</h2>
-          <div>
-            <label className="block text-xs font-medium mb-1">Console Brand Name</label>
-            <input
-              type="text"
-              value={localAppName}
-              onChange={(e) => setLocalAppName(e.target.value)}
-              className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
-            />
-          </div>
+          {isAdmin && (
+            <div>
+              <label className="block text-xs font-medium mb-1">Console Brand Name</label>
+              <input
+                type="text"
+                value={localAppName}
+                onChange={(e) => setLocalAppName(e.target.value)}
+                className="w-full px-3.5 py-2.5 min-h-[44px] text-sm rounded-xl bg-[#F6F7FB] dark:bg-[#101421] border border-[#E8EAF1] dark:border-slate-800"
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium mb-1.5">Theme Mode</label>

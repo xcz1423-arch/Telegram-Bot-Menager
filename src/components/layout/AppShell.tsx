@@ -185,7 +185,7 @@ export function AppShell({
       {/* Desktop Collapsible Sidebar */}
       <aside
         aria-label="Primary navigation"
-        className={`relative z-20 hidden lg:flex flex-col shrink-0 border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 bg-white/80 dark:bg-[#0C0F20]/76 backdrop-blur-xl transition-all duration-200 sticky top-0 h-screen ${
+        className={`relative z-20 hidden lg:flex flex-col shrink-0 border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 bg-white/80 dark:bg-[#0C0F20]/76 backdrop-blur-md transition-all duration-200 sticky top-0 h-screen ${
           sidebarCollapsed ? 'w-[74px]' : 'w-[256px]'
         }`}
       >
@@ -271,7 +271,7 @@ export function AppShell({
       {mobileDrawerOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs" onClick={() => setMobileDrawerOpen(false)} />
-          <aside className="relative w-72 max-w-[85vw] h-full bg-white/88 dark:bg-[#0C0F20]/88 backdrop-blur-xl border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/25 flex flex-col z-10">
+          <aside className="relative w-72 max-w-[85vw] h-full bg-white/88 dark:bg-[#0C0F20]/88 backdrop-blur-md border-r border-[#E2E6F5]/85 dark:border-[#7C6BFF]/25 flex flex-col z-10">
             <div className="h-[84px] px-4 flex items-center justify-between border-b border-[#E8EAF1] dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <img
@@ -387,7 +387,7 @@ export function AppShell({
       {/* Main Content Area */}
       <div className="relative z-10 flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="sticky top-0 z-30 h-[52px] lg:h-14 px-3 sm:px-6 bg-white/76 dark:bg-[#0C0F20]/74 backdrop-blur-xl border-b border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 flex items-center justify-between gap-2 sm:gap-4">
+        <header className="sticky top-0 z-30 h-[52px] lg:h-14 px-3 sm:px-6 bg-white/76 dark:bg-[#0C0F20]/74 backdrop-blur-md border-b border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 flex items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
@@ -475,7 +475,7 @@ export function AppShell({
               </button>
 
               {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-3 z-50">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-md border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-3 z-50">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E8EAF1] dark:border-slate-800">
                     <span className="text-xs font-semibold flex items-center gap-1.5">
                       <Bell className="w-3.5 h-3.5 text-[#7565F6]" />
@@ -585,7 +585,7 @@ export function AppShell({
               </button>
 
               {profileOpen && (
-                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-xl border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-2 z-50">
+                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white/92 dark:bg-[#0D1023]/92 backdrop-blur-md border border-[#E2E6F5] dark:border-[#7C6BFF]/25 shadow-xl p-2 z-50">
                   <div className="px-3 py-2 border-b border-[#E8EAF1] dark:border-slate-800 mb-1 flex items-center gap-2.5">
                     <UserAvatar
                       avatarUrl={admin.avatarUrl}
@@ -664,7 +664,7 @@ export function AppShell({
       {/* Mobile Fixed Thumb-Zone Bottom Navigation Bar (58px + safe area) */}
       <nav
         aria-label="Mobile bottom navigation"
-        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-white/86 dark:bg-[#0C0F20]/84 backdrop-blur-xl border-t border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 grid grid-cols-5 h-[58px] pb-safe"
+        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-white/86 dark:bg-[#0C0F20]/84 backdrop-blur-md border-t border-[#E2E6F5]/85 dark:border-[#7C6BFF]/20 grid grid-cols-5 h-[58px] pb-safe"
       >
         {[
           { id: 'dashboard' as NavTab, label: 'Overview', icon: LayoutDashboard },

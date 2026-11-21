@@ -345,6 +345,140 @@ export async function setBotProfilePhoto(bot: BotRecord, jpegBuffer: Buffer): Pr
   return result;
 }
 
+export interface StoredMenuButton {
+  type: 'default' | 'commands' | 'web_app';
+  text?: string;
+  url?: string;
+}
+
+export function normalizeTelegramMenuButton(raw: unknown): StoredMenuButton {
+  if (!raw || typeof raw !== 'object') {
+    return { type: 'default' };
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.type === 'web_app') {
+    const webApp = obj.web_app && typeof obj.web_app === 'object' ? (obj.web_app as Record<string, unknown>) : {};
+    const url = typeof webApp.url === 'string' ? webApp.url.trim() : typeof obj.url === 'string' ? obj.url.trim() : '';
+    const text = typeof obj.text === 'string' && obj.text.trim() ? obj.text.trim().slice(0, 64) : 'Open';
+    if (url) {
+      return { type: 'web_app', text, url };
+    }
+  }
+  if (obj.type === 'commands') {
+    return { type: 'commands' };
+  }
+  return { type: 'default' };
+}
+
+/**
+ * Downloads the bot's current profile photo via Telegram getUserProfilePhotos + getFile
+ * and converts it into a compact data URL stored in app_settings (`bot_avatar_<id>`).
+ */
+export async function syncBotProfilePhotoFromTelegram(
+  bot: BotRecord,
+  clearIfEmpty = false
+): Promise<{ ok: boolean; hasPhoto: boolean }> {
+  if (bot.mode === 'sandbox') {
+    const existing = getSetting(`bot_avatar_${bot.id}`, '');
+    return { ok: true, hasPhoto: Boolean(existing) };
+  }
+
+  const photosRes = await executeBotMethod(bot, 'getUserProfilePhotos', {
+    user_id: bot.telegram_bot_id,
+    limit: 1,
+  });
+  if (!photosRes.ok || !photosRes.result || typeof photosRes.result !== 'object') {
+    return { ok: false, hasPhoto: false };
+  }
+
+  const payload = photosRes.result as {
+    total_count?: number;
+    photos?: Array<Array<{ file_id?: string; width?: number; height?: number }>>;
+  };
+  const firstSet = Array.isArray(payload.photos) && payload.photos.length > 0 ? payload.photos[0] : null;
+  if (!firstSet || firstSet.length === 0) {
+    if (clearIfEmpty) {
+      db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
+    }
+    return { ok: true, hasPhoto: false };
+  }
+
+  // Pick a crisp medium thumbnail (~160px) to keep SQLite/vault lightweight and fast
+  const preferred =
+    firstSet.find((p) => (p.width || 0) >= 128 && (p.width || 0) <= 320 && p.file_id) ||
+    firstSet.find((p) => Boolean(p.file_id));
+
+  if (!preferred?.file_id) {
+    return { ok: true, hasPhoto: false };
+  }
+
+  const token = decryptToken(bot.encrypted_token);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const fileMetaResp = await fetch(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(preferred.file_id)}`,
+      { method: 'GET', signal: controller.signal }
+    );
+    const fileMetaJson = (await fileMetaResp.json()) as {
+      ok?: boolean;
+      result?: { file_path?: string };
+    };
+    const filePath = fileMetaJson.ok ? fileMetaJson.result?.file_path : undefined;
+    if (!filePath) {
+      return { ok: false, hasPhoto: false };
+    }
+
+    const imgResp = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!imgResp.ok) {
+      return { ok: false, hasPhoto: false };
+    }
+    const buf = Buffer.from(await imgResp.arrayBuffer());
+    if (buf.length === 0 || buf.length > 220_000) {
+      return { ok: false, hasPhoto: false };
+    }
+    const lowerPath = filePath.toLowerCase();
+    const mime = lowerPath.endsWith('.png')
+      ? 'image/png'
+      : lowerPath.endsWith('.webp')
+      ? 'image/webp'
+      : 'image/jpeg';
+    const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+    setSetting(`bot_avatar_${bot.id}`, dataUrl);
+    return { ok: true, hasPhoto: true };
+  } catch {
+    return { ok: false, hasPhoto: false };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Syncs the bot's current Menu Button (Web App link / Commands / Default) and profile photo
+ * best-effort from Telegram Bot API.
+ */
+export async function syncBotTelegramExtras(
+  bot: BotRecord,
+  options?: { clearAvatarIfEmpty?: boolean }
+): Promise<{ menuButton?: StoredMenuButton; hasPhoto?: boolean }> {
+  const [photoOutcome, menuOutcome] = await Promise.allSettled([
+    syncBotProfilePhotoFromTelegram(bot, Boolean(options?.clearAvatarIfEmpty)),
+    executeBotMethod(bot, 'getChatMenuButton', {}),
+  ]);
+
+  let menuButton: StoredMenuButton | undefined;
+  if (menuOutcome.status === 'fulfilled' && menuOutcome.value.ok) {
+    menuButton = normalizeTelegramMenuButton(menuOutcome.value.result);
+    setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(menuButton));
+  }
+
+  const hasPhoto = photoOutcome.status === 'fulfilled' ? photoOutcome.value.hasPhoto : undefined;
+  return { menuButton, hasPhoto };
+}
+
 /**
  * Executes setWebhook, getWebhookInfo, or deleteWebhook directly using a supplied Bot Token
  * without requiring the bot to be pre-registered in the fleet.
@@ -548,6 +682,55 @@ function executeSandboxMethod(
     case 'removeMyProfilePhoto':
       db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
       return succeed(true);
+
+    case 'getUserProfilePhotos': {
+      const existing = getSetting(`bot_avatar_${bot.id}`, '');
+      if (!existing) {
+        return succeed({ total_count: 0, photos: [] });
+      }
+      return succeed({
+        total_count: 1,
+        photos: [
+          [
+            {
+              file_id: `sandbox_avatar_${bot.id}`,
+              file_unique_id: `sb_${bot.id}`,
+              width: 160,
+              height: 160,
+              file_size: existing.length,
+            },
+          ],
+        ],
+      });
+    }
+
+    case 'getChatMenuButton': {
+      const raw = getSetting(`bot_menu_button_${bot.id}`, '');
+      if (!raw) {
+        return succeed({ type: 'default' });
+      }
+      try {
+        const parsed = normalizeTelegramMenuButton(JSON.parse(raw));
+        if (parsed.type === 'web_app' && parsed.url) {
+          return succeed({ type: 'web_app', text: parsed.text || 'Open', web_app: { url: parsed.url } });
+        }
+        return succeed({ type: parsed.type });
+      } catch {
+        return succeed({ type: 'default' });
+      }
+    }
+
+    case 'setChatMenuButton': {
+      const rawBtn = params.menu_button;
+      const normalized = normalizeTelegramMenuButton(rawBtn);
+      if (rawBtn && typeof rawBtn === 'object' && (rawBtn as Record<string, unknown>).type === 'web_app') {
+        if (!normalized.url || !normalized.url.startsWith('https://')) {
+          return fail(400, 'Bad Request: Web App menu_button requires a valid HTTPS url');
+        }
+      }
+      setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(normalized));
+      return succeed(true);
+    }
 
     case 'sendMessage':
     case 'sendPhoto':

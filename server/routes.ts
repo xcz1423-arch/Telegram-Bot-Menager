@@ -47,8 +47,10 @@ import {
   BotRecord,
   executeBotMethod,
   executeDirectWebhookMethod,
+  normalizeTelegramMenuButton,
   processIncomingWebhookUpdate,
   setBotProfilePhoto,
+  syncBotTelegramExtras,
   validateTokenWithTelegram,
 } from './telegramClient.js';
 import { formatDeviceSummary } from '../src/lib/deviceLabel.js';
@@ -57,10 +59,21 @@ import {
   validateBotTokenFormat,
   validateCommandDescription,
   validateCommandName,
+  validateMenuButtonInput,
   validateWebhookUrl,
 } from '../src/lib/telegramSpec.js';
 
 export const apiRouter = express.Router();
+
+function parseStoredMenuButton(botId: number) {
+  const raw = getSetting(`bot_menu_button_${botId}`, '');
+  if (!raw) return null;
+  try {
+    return normalizeTelegramMenuButton(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
 
 function sanitizeBotForClient(row: BotRecord) {
   return {
@@ -77,6 +90,8 @@ function sanitizeBotForClient(row: BotRecord) {
     webhook_status: row.webhook_status,
     webhook_url: row.webhook_url,
     avatar_url: getSetting(`bot_avatar_${row.id}`, '') || null,
+    description_photo_url: getSetting(`bot_desc_pic_${row.id}`, '') || null,
+    menu_button: parseStoredMenuButton(row.id),
     has_webhook_secret: Boolean(row.webhook_secret_encrypted),
     pending_update_count: row.pending_update_count,
     last_webhook_error: row.last_webhook_error,
@@ -1117,13 +1132,14 @@ apiRouter.post('/bots', async (req, res) => {
   const botId = Number(insert.lastInsertRowid);
   db.prepare('INSERT INTO bot_settings (bot_id) VALUES (?)').run(botId);
 
-  // Best-effort sync of existing live bio & description from Telegram
+  // Best-effort sync of existing live bio, description, profile photo, and Web App menu button from Telegram
   if (format.mode === 'live') {
     const insertedBot = getBotById(botId);
     if (insertedBot) {
       const [shortRes, descRes] = await Promise.allSettled([
         shortDesc ? Promise.resolve(null) : executeBotMethod(insertedBot, 'getMyShortDescription', {}),
         executeBotMethod(insertedBot, 'getMyDescription', {}),
+        syncBotTelegramExtras(insertedBot, { clearAvatarIfEmpty: false }),
       ]);
       const fetchedShort =
         shortRes.status === 'fulfilled' && shortRes.value?.ok
@@ -1305,13 +1321,15 @@ apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
     WHERE id = ?
   `).run(nextName, nextShort, nextDesc, bot.id);
 
+  await syncBotTelegramExtras(bot, { clearAvatarIfEmpty: true }).catch(() => undefined);
+
   logActivity({
     action: 'BOT_PROFILE_PULLED',
     botId: bot.id,
     botName: nextName,
     status: 'success',
     relatedResource: `@${bot.username}`,
-    details: 'Pulled current Name, Bio, and Description from Telegram Bot API.',
+    details: 'Pulled current Name, Bio, Description, Profile Photo, and Web App link from Telegram Bot API.',
     ipAddress: getClientIp(req),
   });
 
@@ -1397,6 +1415,127 @@ apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
   res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
 });
 
+apiRouter.post('/bots/:id/description-photo', (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+  const rawImage = String(req.body?.imageDataUrl ?? '').trim();
+  const match = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/i.exec(rawImage);
+  if (!match) {
+    res.status(400).json({ error: 'Invalid banner image format. Please select a JPG, PNG, or WebP image.' });
+    return;
+  }
+  const buf = Buffer.from(match[2], 'base64');
+  if (buf.length === 0 || buf.length > 260_000) {
+    res.status(400).json({ error: 'Banner image size must be under 260 KB (automatically resized to 640x360).' });
+    return;
+  }
+
+  setSetting(`bot_desc_pic_${bot.id}`, rawImage);
+
+  logActivity({
+    action: 'BOT_DESC_PHOTO_UPDATED',
+    botId: bot.id,
+    botName: bot.name,
+    status: 'success',
+    relatedResource: `@${bot.username}`,
+    details: 'Updated "What can this bot do?" 640x360 banner image.',
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+apiRouter.delete('/bots/:id/description-photo', (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+  db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_desc_pic_${bot.id}`);
+
+  logActivity({
+    action: 'BOT_DESC_PHOTO_REMOVED',
+    botId: bot.id,
+    botName: bot.name,
+    status: 'warning',
+    relatedResource: `@${bot.username}`,
+    details: 'Cleared "What can this bot do?" banner image.',
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+apiRouter.get('/bots/:id/menu-button', async (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+  const outcome = await executeBotMethod(bot, 'getChatMenuButton', {});
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 502).json({
+      error: `Telegram getChatMenuButton failed: ${outcome.description || 'Unknown error'}`,
+    });
+    return;
+  }
+  const normalized = normalizeTelegramMenuButton(outcome.result);
+  setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(normalized));
+  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
+apiRouter.put('/bots/:id/menu-button', async (req, res) => {
+  const bot = getBotById(Number(req.params.id));
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+  const rawType = String(req.body?.type ?? 'web_app').trim() as 'default' | 'commands' | 'web_app';
+  const validation = validateMenuButtonInput({
+    type: rawType,
+    text: typeof req.body?.text === 'string' ? req.body.text : undefined,
+    url: typeof req.body?.url === 'string' ? req.body.url : undefined,
+  });
+  if (!validation.valid || !validation.normalized) {
+    res.status(400).json({ error: validation.error || 'Invalid menu button settings.' });
+    return;
+  }
+
+  const normalized = validation.normalized;
+  const telegramPayload =
+    normalized.type === 'web_app'
+      ? { type: 'web_app', text: normalized.text || 'Open', web_app: { url: normalized.url } }
+      : { type: normalized.type };
+
+  const outcome = await executeBotMethod(bot, 'setChatMenuButton', { menu_button: telegramPayload });
+  if (!outcome.ok) {
+    res.status(outcome.httpStatus >= 400 ? outcome.httpStatus : 502).json({
+      error: `Telegram setChatMenuButton failed: ${outcome.description || 'Unknown error'}`,
+    });
+    return;
+  }
+
+  setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(normalized));
+
+  logActivity({
+    action: 'BOT_MENU_BUTTON_UPDATED',
+    botId: bot.id,
+    botName: bot.name,
+    status: 'success',
+    relatedResource: `@${bot.username}`,
+    details:
+      normalized.type === 'web_app'
+        ? `Updated Web App menu button (${normalized.text}): ${normalized.url}`
+        : `Set menu button mode to ${normalized.type}.`,
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+});
+
 apiRouter.patch('/bots/:id/settings', (req, res) => {
   const bot = getBotById(Number(req.params.id));
   if (!bot) {
@@ -1457,6 +1596,11 @@ apiRouter.post('/bots/:id/revalidate', async (req, res) => {
     bot.id
   );
 
+  const refreshedBot = getBotById(bot.id);
+  if (refreshedBot) {
+    await syncBotTelegramExtras(refreshedBot, { clearAvatarIfEmpty: false }).catch(() => undefined);
+  }
+
   res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
 });
 
@@ -1488,7 +1632,11 @@ apiRouter.delete('/bots/:id', (req, res) => {
     ON CONFLICT(token_fingerprint) DO UPDATE SET deleted_at = datetime('now')
   `).run(bot.token_fingerprint);
   db.prepare('DELETE FROM bots WHERE id = ?').run(bot.id);
-  db.prepare('DELETE FROM app_settings WHERE setting_key = ?').run(`bot_avatar_${bot.id}`);
+  db.prepare('DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)').run(
+    `bot_avatar_${bot.id}`,
+    `bot_desc_pic_${bot.id}`,
+    `bot_menu_button_${bot.id}`
+  );
   logActivity({
     action: 'BOT_REMOVED',
     botId: null,
@@ -2855,10 +3003,25 @@ apiRouter.get('/settings', (_req, res) => {
 });
 
 apiRouter.patch('/settings', (req, res) => {
-  const allowed = ['app_name', 'default_theme', 'timezone', 'date_format', 'notify_webhook_errors', 'notify_failed_api'];
+  const isAdmin = req.auth?.role === 'admin';
+  const currentAppName = getSetting('app_name', 'XC BOT CONTROL');
+  if (req.body?.app_name !== undefined && String(req.body.app_name).trim() !== currentAppName && !isAdmin) {
+    res.status(403).json({ error: 'Only administrators can change the Console Brand Name.' });
+    return;
+  }
+
+  const allowed = [
+    ...(isAdmin ? ['app_name'] : []),
+    'default_theme',
+    'timezone',
+    'date_format',
+    'notify_webhook_errors',
+    'notify_failed_api',
+  ];
   for (const key of allowed) {
     if (req.body?.[key] !== undefined) {
-      setSetting(key, String(req.body[key]));
+      const value = key === 'app_name' ? String(req.body[key]).trim() || 'XC BOT CONTROL' : String(req.body[key]);
+      setSetting(key, value);
     }
   }
   logActivity({

@@ -124,7 +124,7 @@ export function AuthGate({
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 rounded-2xl bg-white/90 dark:bg-[#0D1023]/90 backdrop-blur-xl border border-[#F5B942]/45 shadow-2xl p-3.5 flex items-start gap-3"
+          className="fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 rounded-2xl bg-white/90 dark:bg-[#0D1023]/90 backdrop-blur-md border border-[#F5B942]/45 shadow-2xl p-3.5 flex items-start gap-3"
         >
           <div className="w-8 h-8 rounded-xl bg-[#F5B942]/15 text-[#D99B16] dark:text-[#F5B942] flex items-center justify-center shrink-0">
             <AlertTriangle className="w-4 h-4" />
@@ -170,7 +170,7 @@ export function AuthGate({
             className="w-52 h-36 sm:w-64 sm:h-40 object-contain border-0 drop-shadow-[0_12px_28px_rgba(88,72,224,0.32)] dark:drop-shadow-[0_12px_32px_rgba(139,92,246,0.48)]"
           />
         </div>
-        <div className="bg-white/80 dark:bg-[#0B0D1F]/76 backdrop-blur-xl border border-white/85 dark:border-[#7C6BFF]/25 rounded-2xl px-6 pb-6 pt-8 sm:px-8 sm:pb-7 sm:pt-9 shadow-[0_24px_60px_rgba(92,76,228,0.14)] dark:shadow-[0_24px_64px_rgba(4,6,18,0.78),0_0_40px_rgba(117,101,246,0.14)]">
+        <div className="bg-white/80 dark:bg-[#0B0D1F]/76 backdrop-blur-md border border-white/85 dark:border-[#7C6BFF]/25 rounded-2xl px-6 pb-6 pt-8 sm:px-8 sm:pb-7 sm:pt-9 shadow-[0_24px_60px_rgba(92,76,228,0.14)] dark:shadow-[0_24px_64px_rgba(4,6,18,0.78),0_0_40px_rgba(117,101,246,0.14)]">
           {mode !== 'recover' && (
             <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#EEF0FA]/90 dark:bg-[#080A17]/80 border border-[#E0E4F2] dark:border-white/10 mb-5">
               <button
