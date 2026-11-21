@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/lib/telegramSpec.test.ts server/crypto.test.ts server/serverless.test.ts server/app.test.ts"
+    "test": "tsx --test src/lib/telegramSpec.test.ts src/lib/networkStatus.test.ts server/crypto.test.ts server/serverless.test.ts server/app.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

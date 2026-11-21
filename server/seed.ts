@@ -12,9 +12,17 @@ function dateDaysAgo(daysAgo: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
+export function seedDemoWorkspace(baseUrl = 'https://xc-console.local', ownerUserId: number | null = null): void {
   const existingBots = db.prepare('SELECT COUNT(*) as cnt FROM bots').get() as { cnt: number };
   if (existingBots.cnt > 0) return;
+
+  let resolvedOwnerId = ownerUserId;
+  if (resolvedOwnerId === null) {
+    const ownerRow =
+      (db.prepare(`SELECT id FROM admin_users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined) ||
+      (db.prepare(`SELECT id FROM admin_users ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined);
+    resolvedOwnerId = ownerRow?.id ?? null;
+  }
 
   setSetting('app_name', 'XC BOT CONTROL');
   setSetting('default_theme', 'dark');
@@ -80,14 +88,15 @@ export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
     const res = db
       .prepare(`
         INSERT INTO bots (
-          bot_key, telegram_bot_id, name, username, short_description, description,
+          owner_user_id, bot_key, telegram_bot_id, name, username, short_description, description,
           mode, encrypted_token, token_fingerprint, token_masked,
           connection_status, webhook_status, webhook_url, webhook_secret_encrypted,
           can_join_groups, can_read_all_group_messages, supports_inline_queries,
           last_checked_at, last_activity_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'sandbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'sandbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `)
       .run(
+        resolvedOwnerId,
         b.bot_key,
         b.telegram_bot_id,
         b.name,
@@ -153,9 +162,10 @@ export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
 
   // Keyboard Templates
   db.prepare(`
-    INSERT INTO bot_templates (bot_id, name, template_type, payload_json)
-    VALUES (?, ?, 'inline_keyboard', ?)
+    INSERT INTO bot_templates (owner_user_id, bot_id, name, template_type, payload_json)
+    VALUES (?, ?, ?, 'inline_keyboard', ?)
   `).run(
+    resolvedOwnerId,
     commerceId,
     'Order Action Menu',
     JSON.stringify({
@@ -170,9 +180,10 @@ export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
   );
 
   db.prepare(`
-    INSERT INTO bot_templates (bot_id, name, template_type, payload_json)
-    VALUES (?, ?, 'inline_keyboard', ?)
+    INSERT INTO bot_templates (owner_user_id, bot_id, name, template_type, payload_json)
+    VALUES (?, ?, ?, 'inline_keyboard', ?)
   `).run(
+    resolvedOwnerId,
     opsId,
     'Release Approval Gate',
     JSON.stringify({
@@ -330,9 +341,10 @@ export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
 
   // Saved API Requests
   db.prepare(`
-    INSERT INTO saved_api_requests (bot_id, name, method, params_json)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO saved_api_requests (owner_user_id, bot_id, name, method, params_json)
+    VALUES (?, ?, ?, ?, ?)
   `).run(
+    resolvedOwnerId,
     commerceId,
     'Dispatch Order Confirmation',
     'sendMessage',
@@ -344,25 +356,28 @@ export function seedDemoWorkspace(baseUrl = 'https://xc-console.local'): void {
   );
 
   db.prepare(`
-    INSERT INTO saved_api_requests (bot_id, name, method, params_json)
-    VALUES (?, ?, ?, ?)
-  `).run(opsId, 'Inspect Webhook Health', 'getWebhookInfo', '{}');
+    INSERT INTO saved_api_requests (owner_user_id, bot_id, name, method, params_json)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(resolvedOwnerId, opsId, 'Inspect Webhook Health', 'getWebhookInfo', '{}');
 
   // Notifications & Activity Logs
   pushNotification({
     botId: commerceId,
+    targetUserId: resolvedOwnerId,
     severity: 'success',
     title: 'Webhook Verified',
     message: '@xc_commerce_bot webhook endpoint responded 200 OK with valid secret header.',
   });
   pushNotification({
     botId: supportId,
+    targetUserId: resolvedOwnerId,
     severity: 'warning',
     title: 'Bot Disconnected',
     message: '@xc_support_desk_bot has an inactive webhook and failed a recent chat lookup.',
   });
 
   logActivity({
+    ownerUserId: resolvedOwnerId,
     action: 'WORKSPACE_INITIALIZED',
     status: 'success',
     relatedResource: 'seed',

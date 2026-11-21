@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Shield, KeyRound, Eye, EyeOff, ArrowRight, Sun, Moon, Camera, UserPlus, AlertTriangle, X } from 'lucide-react';
+import { Shield, KeyRound, Eye, EyeOff, Sun, Moon, Camera, UserPlus, AlertTriangle, X, Crown, ChevronRight } from 'lucide-react';
 import { ApiError, apiFetch, setCsrfToken } from '../../lib/api';
 import { prepareSquareAvatarJpeg } from '../../lib/imageUtils';
 import type { AdminUser, ThemeMode } from '../../types';
@@ -383,28 +383,70 @@ export function AuthGate({
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full min-h-[46px] px-4 py-2.5 text-sm font-semibold text-white bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {mode === 'register' ? (
-                <>
-                  <UserPlus className="w-4 h-4" />
-                  <span>{loading ? 'Creating Account...' : 'Create Account'}</span>
-                </>
-              ) : mode === 'recover' ? (
-                <>
-                  <KeyRound className="w-4 h-4" />
-                  <span>{loading ? 'Updating...' : 'Reset Admin Password'}</span>
-                </>
-              ) : (
-                <>
-                  <span>{loading ? 'Authenticating...' : 'Sign In'}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
+            {mode === 'login' ? (
+              <div className="pt-1.5 space-y-2.5">
+                <div className="flex items-center justify-center gap-3 px-4" aria-hidden="true">
+                  <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#7C5CFC]/50 to-[#7C5CFC]/70 dark:via-[#7C6BFF]/45 dark:to-[#9B8CFF]/75" />
+                  <Crown className="w-4 h-4 text-[#7352F5] dark:text-[#7E6BFF] fill-[#7352F5]/20 dark:fill-[#7E6BFF]/25 drop-shadow-[0_0_8px_rgba(124,107,255,0.45)]" />
+                  <div className="h-px flex-1 bg-gradient-to-l from-transparent via-[#7C5CFC]/50 to-[#7C5CFC]/70 dark:via-[#7C6BFF]/45 dark:to-[#9B8CFF]/75" />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  aria-label="Sign In"
+                  data-no-smallcaps="true"
+                  className="group relative w-full rounded-full p-[1.5px] bg-[linear-gradient(90deg,#8A38F5_0%,#5C5BFF_50%,#1488FF_100%)] dark:bg-[linear-gradient(90deg,#C892FF_0%,#768BFF_52%,#5FD4FF_100%)] shadow-[0_8px_24px_rgba(107,56,245,0.28),0_2px_10px_rgba(20,136,255,0.22)] dark:shadow-[0_8px_28px_rgba(104,35,255,0.52),0_0_22px_rgba(16,142,255,0.42)] hover:brightness-105 active:scale-[0.985] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <span className="relative flex items-center justify-between w-full min-h-[56px] px-2.5 py-2 rounded-full overflow-hidden bg-[linear-gradient(90deg,#F3EAFF_0%,#FFFFFF_48%,#E6F2FF_100%)] dark:bg-[linear-gradient(90deg,#721BFF_0%,#5734FF_38%,#2A5FFF_70%,#0B8CFF_100%)] shadow-[inset_0_1.5px_1px_rgba(255,255,255,0.9),inset_0_-2px_5px_rgba(106,90,235,0.14)] dark:shadow-[inset_0_1.5px_1px_rgba(255,255,255,0.45),inset_0_-3px_8px_rgba(10,12,48,0.45)]">
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-4 top-0 h-1/2 rounded-full bg-gradient-to-b from-white/55 to-transparent dark:from-white/25"
+                    />
+                    <span className="relative z-10 flex items-center gap-3 shrink-0">
+                      <span className="w-10 h-10 rounded-full flex items-center justify-center bg-[linear-gradient(145deg,#8231FA,#4D1ED8)] dark:bg-[#190944]/70 border border-white/30 shadow-[0_3px_10px_rgba(107,38,242,0.42)] dark:shadow-inner text-white">
+                        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 2.75 4.75 5.65v5.6c0 4.65 3.05 8.85 7.25 10.1 4.2-1.25 7.25-5.45 7.25-10.1v-5.6L12 2.75Z" />
+                          <path d="M8.1 14.35h7.8l.55-4.3-2.45 1.8L12 9.15l-2 2.7-2.45-1.8.55 4.3Z" fill="currentColor" stroke="none" />
+                        </svg>
+                      </span>
+                      <span aria-hidden="true" className="w-[1.5px] h-7 rounded-full bg-[#6842F2]/40 dark:bg-white/45" />
+                    </span>
+
+                    <span className="relative z-10 flex-1 text-center px-2">
+                      <span className="block text-[17px] sm:text-[18px] font-extrabold tracking-[0.06em] leading-tight text-[#0E1128] dark:text-white">
+                        {loading ? 'SIGNING IN...' : 'SIGN IN'}
+                      </span>
+                      <span className="block text-[11px] font-medium tracking-[0.03em] leading-tight text-[#434B6C] dark:text-white/85 mt-0.5">
+                        {loading ? 'Authenticating session' : 'Access Your Account'}
+                      </span>
+                    </span>
+
+                    <span className="relative z-10 w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-[linear-gradient(145deg,#2575FC,#0B4EEB)] dark:bg-[#07266B]/65 border border-white/30 shadow-[0_3px_10px_rgba(22,94,242,0.42)] dark:shadow-inner text-white transition-transform duration-200 group-hover:translate-x-0.5">
+                      <ChevronRight className="w-5 h-5 stroke-[2.75]" />
+                    </span>
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full min-h-[46px] px-4 py-2.5 text-sm font-semibold text-white bg-[#6555E8] dark:bg-[#7565F6] hover:bg-[#5747d4] rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {mode === 'register' ? (
+                  <>
+                    <UserPlus className="w-4 h-4" />
+                    <span>{loading ? 'Creating Account...' : 'Create Account'}</span>
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="w-4 h-4" />
+                    <span>{loading ? 'Updating...' : 'Reset Admin Password'}</span>
+                  </>
+                )}
+              </button>
+            )}
           </form>
 
           {mode === 'recover' && (

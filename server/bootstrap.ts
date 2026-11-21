@@ -46,6 +46,12 @@ export function ensureServerlessBootstrap(force = false): void {
     });
   }
 
+  // Resolve primary administrator ID so env-configured & demo bots belong strictly to the admin account
+  const primaryOwner =
+    (db.prepare(`SELECT id FROM admin_users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined) ||
+    (db.prepare(`SELECT id FROM admin_users ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined);
+  const ownerUserId = primaryOwner?.id ?? null;
+
   // 2. Env-configured Bot Tokens (TELEGRAM_BOT_TOKEN / XC_BOT_TOKENS) — encrypted at rest, never exposed to client
   const envBots = parseEnvBotTokens({
     TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
@@ -74,13 +80,14 @@ export function ensureServerlessBootstrap(force = false): void {
     const ins = db
       .prepare(`
         INSERT INTO bots (
-          bot_key, telegram_bot_id, name, username, short_description, description,
+          owner_user_id, bot_key, telegram_bot_id, name, username, short_description, description,
           mode, encrypted_token, token_fingerprint, token_masked,
           connection_status, webhook_status, webhook_secret_encrypted,
           last_checked_at, last_activity_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', 'inactive', ?, datetime('now'), datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', 'inactive', ?, datetime('now'), datetime('now'))
       `)
       .run(
+        ownerUserId,
         botKey,
         parsedId,
         entry.name || (isSandbox ? `Sandbox ${rawUsername}` : `Telegram Bot ${parsedId}`),
@@ -99,6 +106,6 @@ export function ensureServerlessBootstrap(force = false): void {
 
   // 3. Optional demo workspace seeding (XC_SEED_DEMO=true)
   if (process.env.XC_SEED_DEMO === 'true') {
-    seedDemoWorkspace(baseUrl);
+    seedDemoWorkspace(baseUrl, ownerUserId);
   }
 }

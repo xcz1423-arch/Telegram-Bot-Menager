@@ -94,3 +94,172 @@
   background-color: rgba(8, 10, 22, 0.72);
   border-color: rgba(124, 107, 255, 0.16);
 }
+
+@keyframes xc-overlay-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes xc-overlay-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+}
+
+@keyframes xc-astro-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes xc-astro-celebrate {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  35% {
+    transform: translateY(-9px) rotate(-2deg);
+  }
+  70% {
+    transform: translateY(-4px) rotate(2deg);
+  }
+}
+
+@keyframes xc-slash-pulse {
+  0%, 100% {
+    opacity: 0.92;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.7));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(248, 113, 113, 0.95));
+  }
+}
+
+@keyframes xc-wifi-wave {
+  0%, 100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.92;
+  }
+}
+
+@keyframes xc-signal-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+
+@keyframes xc-star-twinkle {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
+.xc-offline-enter {
+  animation: xc-overlay-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.xc-offline-exit {
+  animation: xc-overlay-fade-out 0.26s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.xc-astro-float {
+  animation: xc-astro-float 3.8s ease-in-out infinite;
+}
+
+.xc-astro-celebrate {
+  animation: xc-astro-celebrate 1.8s ease-in-out infinite;
+}
+
+.xc-slash-pulse {
+  animation: xc-slash-pulse 2.2s ease-in-out infinite;
+}
+
+.xc-wifi-wave {
+  animation: xc-wifi-wave 2.4s ease-in-out infinite;
+}
+
+.xc-signal-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: xc-signal-ring 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.xc-star-twinkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: xc-star-twinkle 2.6s ease-in-out infinite;
+}
+
+@keyframes xc-swirl-float {
+  0%, 100% {
+    transform: translateY(0px) rotate(-4deg);
+    opacity: 0.78;
+  }
+  50% {
+    transform: translateY(-5px) rotate(4deg);
+    opacity: 1;
+  }
+}
+
+@keyframes xc-orbit-glow {
+  0%, 100% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.55));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(52, 211, 153, 0.9));
+  }
+}
+
+.xc-swirl-float {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: xc-swirl-float 2.8s ease-in-out infinite;
+}
+
+.xc-orbit-glow {
+  animation: xc-orbit-glow 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xc-offline-enter,
+  .xc-offline-exit,
+  .xc-astro-float,
+  .xc-astro-celebrate,
+  .xc-slash-pulse,
+  .xc-wifi-wave,
+  .xc-signal-ring,
+  .xc-star-twinkle,
+  .xc-swirl-float,
+  .xc-orbit-glow {
+    animation: none !important;
+  }
+}
+

@@ -4,6 +4,7 @@ import { redactSecrets } from '../src/lib/telegramSpec.js';
 
 export interface BotRecord {
   id: number;
+  owner_user_id?: number | null;
   bot_key: string;
   telegram_bot_id: number;
   name: string;

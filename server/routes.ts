@@ -107,6 +107,11 @@ function getBotById(botId: number): BotRecord | undefined {
   return db.prepare('SELECT * FROM bots WHERE id = ?').get(botId) as BotRecord | undefined;
 }
 
+function getOwnedBotById(botId: number, userId: number): BotRecord | undefined {
+  if (!Number.isFinite(botId) || botId <= 0) return undefined;
+  return db.prepare('SELECT * FROM bots WHERE id = ? AND owner_user_id = ?').get(botId, userId) as BotRecord | undefined;
+}
+
 // ============================================================================
 // PUBLIC HEALTH & INCOMING WEBHOOK RECEIVER
 // ============================================================================
@@ -248,7 +253,7 @@ apiRouter.post('/auth/setup', (req, res) => {
       host: req.get('host'),
       proto: String(req.headers['x-forwarded-proto'] || req.protocol),
     });
-    seedDemoWorkspace(baseUrl);
+    seedDemoWorkspace(baseUrl, userId);
   }
 
   const session = createAdminSession({
@@ -266,6 +271,7 @@ apiRouter.post('/auth/setup', (req, res) => {
     String(req.headers['user-agent'] || 'Unknown').slice(0, 200)
   );
   logActivity({
+    ownerUserId: userId,
     action: 'ADMIN_SETUP_COMPLETE',
     status: 'success',
     relatedResource: username,
@@ -362,6 +368,7 @@ apiRouter.post('/auth/register', (req, res) => {
   );
 
   logActivity({
+    ownerUserId: userId,
     action: 'USER_REGISTERED',
     status: 'success',
     relatedResource: `@${username}`,
@@ -443,7 +450,7 @@ apiRouter.post('/auth/autostart', (req, res) => {
     host: req.get('host'),
     proto: String(req.headers['x-forwarded-proto'] || req.protocol),
   });
-  seedDemoWorkspace(baseUrl);
+  seedDemoWorkspace(baseUrl, admin.id);
 
   const session = createAdminSession({
     userId: admin.id,
@@ -558,6 +565,7 @@ apiRouter.post('/auth/login', (req, res) => {
   });
 
   logActivity({
+    ownerUserId: user.id,
     action: 'ADMIN_LOGIN',
     status: 'success',
     relatedResource: user.username,
@@ -640,6 +648,7 @@ apiRouter.post('/auth/logout', (req, res) => {
     ua
   );
   logActivity({
+    ownerUserId: req.auth?.userId ?? null,
     action: 'ADMIN_LOGOUT',
     status: 'success',
     relatedResource: req.auth?.username,
@@ -672,6 +681,7 @@ apiRouter.post('/auth/change-password', (req, res) => {
   );
 
   logActivity({
+    ownerUserId: user.id,
     action: 'ADMIN_PASSWORD_CHANGED',
     status: 'success',
     relatedResource: user.username,
@@ -760,6 +770,7 @@ apiRouter.patch('/auth/profile', (req, res) => {
   const ip = getClientIp(req);
   if (changes.length > 0) {
     logActivity({
+      ownerUserId: user.id,
       action: 'PROFILE_UPDATED',
       status: 'success',
       relatedResource: `@${user.username}`,
@@ -855,6 +866,7 @@ apiRouter.post('/auth/sessions/revoke-others', (req, res) => {
   );
 
   logActivity({
+    ownerUserId: userId,
     action: 'SESSIONS_REVOKED_ALL',
     status: 'warning',
     relatedResource: `@${req.auth!.username}`,
@@ -902,6 +914,7 @@ apiRouter.delete('/auth/sessions/:id', (req, res) => {
   );
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'SESSION_REVOKED',
     status: 'warning',
     relatedResource: `@${req.auth!.username}`,
@@ -916,15 +929,20 @@ apiRouter.delete('/auth/sessions/:id', (req, res) => {
 // MAIN DASHBOARD
 // ============================================================================
 apiRouter.get('/dashboard', (req, res) => {
+  const userId = req.auth!.userId;
   const botIdFilter = req.query.botId ? Number(req.query.botId) : null;
 
-  const bots = db.prepare('SELECT * FROM bots ORDER BY created_at DESC').all() as unknown as BotRecord[];
+  const bots = db
+    .prepare('SELECT * FROM bots WHERE owner_user_id = ? ORDER BY created_at DESC')
+    .all(userId) as unknown as BotRecord[];
   const totalBots = bots.length;
   const activeBots = bots.filter((b) => b.connection_status === 'connected').length;
   const inactiveBots = totalBots - activeBots;
 
-  const msgWhere = botIdFilter ? 'WHERE bot_id = ?' : '';
-  const msgParams = botIdFilter ? [botIdFilter] : [];
+  const msgWhere = botIdFilter
+    ? 'WHERE bot_id = ? AND bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?)'
+    : 'WHERE bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?)';
+  const msgParams: SQLInputValue[] = botIdFilter ? [botIdFilter, userId] : [userId];
 
   const messagesSent = (
     db.prepare(`SELECT COUNT(*) as cnt FROM bot_messages ${msgWhere}`).get(...msgParams) as { cnt: number }
@@ -962,42 +980,45 @@ apiRouter.get('/dashboard', (req, res) => {
               SUM(api_success) as api_success,
               SUM(api_failed) as api_failed
        FROM analytics_daily
-       ${botIdFilter ? 'WHERE bot_id = ?' : ''}
+       ${msgWhere}
        GROUP BY metric_date
        ORDER BY metric_date ASC
        LIMIT 30`
     )
     .all(...msgParams);
 
+  const joinClause = botIdFilter ? 'WHERE b.owner_user_id = ? AND b.id = ?' : 'WHERE b.owner_user_id = ?';
+  const joinParams: SQLInputValue[] = botIdFilter ? [userId, botIdFilter] : [userId];
+
   const recentUpdates = db
     .prepare(`
       SELECT u.id, u.bot_id, b.name as bot_name, b.username as bot_username, u.update_id, u.update_type, u.summary, u.processing_status, u.received_at
       FROM bot_updates u
       JOIN bots b ON b.id = u.bot_id
-      ${botIdFilter ? 'WHERE u.bot_id = ?' : ''}
+      ${joinClause}
       ORDER BY u.received_at DESC LIMIT 6
     `)
-    .all(...msgParams);
+    .all(...joinParams);
 
   const recentMessages = db
     .prepare(`
       SELECT m.id, m.bot_id, b.name as bot_name, m.chat_id, m.message_type, m.content_preview, m.delivery_status, m.sent_at
       FROM bot_messages m
       JOIN bots b ON b.id = m.bot_id
-      ${botIdFilter ? 'WHERE m.bot_id = ?' : ''}
+      ${joinClause}
       ORDER BY m.sent_at DESC LIMIT 6
     `)
-    .all(...msgParams);
+    .all(...joinParams);
 
   const recentApiRequests = db
     .prepare(`
       SELECT a.id, a.bot_id, b.username as bot_username, a.method, a.http_status, a.ok, a.duration_ms, a.error_message, a.created_at
       FROM api_logs a
-      LEFT JOIN bots b ON b.id = a.bot_id
-      ${botIdFilter ? 'WHERE a.bot_id = ?' : ''}
+      JOIN bots b ON b.id = a.bot_id
+      ${joinClause}
       ORDER BY a.created_at DESC LIMIT 8
     `)
-    .all(...msgParams);
+    .all(...joinParams);
 
   res.json({
     stats: {
@@ -1021,8 +1042,10 @@ apiRouter.get('/dashboard', (req, res) => {
 // ============================================================================
 // MULTI-BOT MANAGEMENT
 // ============================================================================
-apiRouter.get('/bots', (_req, res) => {
-  const rows = db.prepare('SELECT * FROM bots ORDER BY created_at DESC').all() as unknown as BotRecord[];
+apiRouter.get('/bots', (req, res) => {
+  const rows = db
+    .prepare('SELECT * FROM bots WHERE owner_user_id = ? ORDER BY created_at DESC')
+    .all(req.auth!.userId) as unknown as BotRecord[];
   const enriched = rows.map((b) => {
     const chatsCount = (db.prepare('SELECT COUNT(*) as c FROM bot_chats WHERE bot_id = ?').get(b.id) as { c: number }).c;
     const msgsCount = (db.prepare('SELECT COUNT(*) as c FROM bot_messages WHERE bot_id = ?').get(b.id) as { c: number }).c;
@@ -1046,14 +1069,17 @@ apiRouter.post('/bots/validate-token', async (req, res) => {
   }
 
   const fingerprint = hashTokenFingerprint(rawToken);
-  const existing = db.prepare('SELECT id, username FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
-    | { id: number; username: string }
-    | undefined;
+  const existing = db
+    .prepare('SELECT id, username, owner_user_id FROM bots WHERE token_fingerprint = ?')
+    .get(fingerprint) as { id: number; username: string; owner_user_id: number | null } | undefined;
 
   if (existing) {
     res.status(409).json({
       ok: false,
-      error: `Duplicate token detected: this token is already connected as @${existing.username}.`,
+      error:
+        existing.owner_user_id === req.auth!.userId
+          ? `Duplicate token detected: this token is already connected as @${existing.username}.`
+          : 'This bot token is already registered to another account.',
     });
     return;
   }
@@ -1073,6 +1099,7 @@ apiRouter.post('/bots/validate-token', async (req, res) => {
 });
 
 apiRouter.post('/bots', async (req, res) => {
+  const userId = req.auth!.userId;
   const rawToken = String(req.body?.token ?? '').trim();
   const customName = String(req.body?.name ?? '').trim();
   const shortDesc = String(req.body?.short_description ?? '').trim();
@@ -1084,11 +1111,16 @@ apiRouter.post('/bots', async (req, res) => {
   }
 
   const fingerprint = hashTokenFingerprint(rawToken);
-  const dup = db.prepare('SELECT id, username FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
-    | { id: number; username: string }
-    | undefined;
+  const dup = db
+    .prepare('SELECT id, username, owner_user_id FROM bots WHERE token_fingerprint = ?')
+    .get(fingerprint) as { id: number; username: string; owner_user_id: number | null } | undefined;
   if (dup) {
-    res.status(409).json({ error: `This bot token is already connected (@${dup.username}).` });
+    res.status(409).json({
+      error:
+        dup.owner_user_id === userId
+          ? `This bot token is already connected (@${dup.username}).`
+          : 'This bot token is already registered to another account.',
+    });
     return;
   }
   db.prepare('DELETE FROM deleted_bots WHERE token_fingerprint = ?').run(fingerprint);
@@ -1106,14 +1138,15 @@ apiRouter.post('/bots', async (req, res) => {
   const insert = db
     .prepare(`
       INSERT INTO bots (
-        bot_key, telegram_bot_id, name, username, short_description, mode,
+        owner_user_id, bot_key, telegram_bot_id, name, username, short_description, mode,
         encrypted_token, token_fingerprint, token_masked,
         connection_status, webhook_status, webhook_secret_encrypted,
         can_join_groups, can_read_all_group_messages, supports_inline_queries,
         last_checked_at, last_activity_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', 'inactive', ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', 'inactive', ?, ?, ?, ?, datetime('now'), datetime('now'))
     `)
     .run(
+      userId,
       botKey,
       p.id,
       customName || p.first_name,
@@ -1134,7 +1167,7 @@ apiRouter.post('/bots', async (req, res) => {
 
   // Best-effort sync of existing live bio, description, profile photo, and Web App menu button from Telegram
   if (format.mode === 'live') {
-    const insertedBot = getBotById(botId);
+    const insertedBot = getOwnedBotById(botId, userId);
     if (insertedBot) {
       const [shortRes, descRes] = await Promise.allSettled([
         shortDesc ? Promise.resolve(null) : executeBotMethod(insertedBot, 'getMyShortDescription', {}),
@@ -1160,6 +1193,7 @@ apiRouter.post('/bots', async (req, res) => {
   }
 
   logActivity({
+    ownerUserId: userId,
     action: 'BOT_ADDED',
     botId,
     botName: customName || p.first_name,
@@ -1170,17 +1204,18 @@ apiRouter.post('/bots', async (req, res) => {
   });
   pushNotification({
     botId,
+    targetUserId: userId,
     severity: 'success',
     title: 'Bot Connected',
     message: `@${p.username} verified via getMe and encrypted at rest.`,
   });
 
-  const saved = getBotById(botId)!;
+  const saved = getOwnedBotById(botId, userId)!;
   res.status(201).json({ ok: true, bot: sanitizeBotForClient(saved) });
 });
 
 apiRouter.get('/bots/:id', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1196,7 +1231,7 @@ apiRouter.get('/bots/:id', (req, res) => {
 });
 
 apiRouter.patch('/bots/:id', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1329,7 +1364,7 @@ apiRouter.patch('/bots/:id', async (req, res) => {
       res.status(firstFail.outcome.httpStatus >= 400 ? firstFail.outcome.httpStatus : 502).json({
         error: `Telegram ${firstFail.method} failed: ${firstFail.outcome.description || 'Unknown error'}`,
         syncedMethods,
-        bot: sanitizeBotForClient(getBotById(bot.id)!),
+        bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!),
       });
       return;
     }
@@ -1349,6 +1384,7 @@ apiRouter.patch('/bots/:id', async (req, res) => {
   `).run(savedName, savedShort, savedDescription, nextStatus, bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_UPDATED',
     botId: bot.id,
     botName: savedName,
@@ -1360,11 +1396,11 @@ apiRouter.patch('/bots/:id', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, syncedMethods, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, syncedMethods, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1405,6 +1441,7 @@ apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
   await syncBotTelegramExtras(bot, { clearAvatarIfEmpty: true }).catch(() => undefined);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_PROFILE_PULLED',
     botId: bot.id,
     botName: nextName,
@@ -1414,11 +1451,11 @@ apiRouter.post('/bots/:id/sync-profile', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.post('/bots/:id/profile-photo', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1455,6 +1492,7 @@ apiRouter.post('/bots/:id/profile-photo', async (req, res) => {
   db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_PHOTO_UPDATED',
     botId: bot.id,
     botName: bot.name,
@@ -1464,11 +1502,11 @@ apiRouter.post('/bots/:id/profile-photo', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1486,6 +1524,7 @@ apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
   db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_PHOTO_REMOVED',
     botId: bot.id,
     botName: bot.name,
@@ -1495,11 +1534,11 @@ apiRouter.delete('/bots/:id/profile-photo', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.post('/bots/:id/description-photo', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1520,6 +1559,7 @@ apiRouter.post('/bots/:id/description-photo', (req, res) => {
   db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_DESC_PHOTO_UPDATED',
     botId: bot.id,
     botName: bot.name,
@@ -1529,11 +1569,11 @@ apiRouter.post('/bots/:id/description-photo', (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.delete('/bots/:id/description-photo', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1542,6 +1582,7 @@ apiRouter.delete('/bots/:id/description-photo', (req, res) => {
   db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_DESC_PHOTO_REMOVED',
     botId: bot.id,
     botName: bot.name,
@@ -1551,11 +1592,11 @@ apiRouter.delete('/bots/:id/description-photo', (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.get('/bots/:id/menu-button', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1569,11 +1610,11 @@ apiRouter.get('/bots/:id/menu-button', async (req, res) => {
   }
   const normalized = normalizeTelegramMenuButton(outcome.result);
   setSetting(`bot_menu_button_${bot.id}`, JSON.stringify(normalized));
-  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.put('/bots/:id/menu-button', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1607,6 +1648,7 @@ apiRouter.put('/bots/:id/menu-button', async (req, res) => {
   db.prepare(`UPDATE bots SET updated_at = datetime('now') WHERE id = ?`).run(bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_MENU_BUTTON_UPDATED',
     botId: bot.id,
     botName: bot.name,
@@ -1619,11 +1661,11 @@ apiRouter.put('/bots/:id/menu-button', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, menu_button: normalized, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.patch('/bots/:id/settings', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1642,6 +1684,7 @@ apiRouter.patch('/bots/:id/settings', (req, res) => {
   `).run(parseMode, disableNotification, protectContent, autoStoreUpdates, bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_SETTINGS_UPDATED',
     botId: bot.id,
     botName: bot.name,
@@ -1654,7 +1697,7 @@ apiRouter.patch('/bots/:id/settings', (req, res) => {
 });
 
 apiRouter.post('/bots/:id/revalidate', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1663,7 +1706,7 @@ apiRouter.post('/bots/:id/revalidate', async (req, res) => {
   const check = await validateTokenWithTelegram(rawToken, bot.mode);
   if (!check.ok || !check.profile) {
     db.prepare(`UPDATE bots SET connection_status = 'invalid_token', last_checked_at = datetime('now') WHERE id = ?`).run(bot.id);
-    res.status(400).json({ ok: false, error: check.error || 'Token validation failed.', bot: sanitizeBotForClient(getBotById(bot.id)!) });
+    res.status(400).json({ ok: false, error: check.error || 'Token validation failed.', bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
     return;
   }
 
@@ -1682,16 +1725,16 @@ apiRouter.post('/bots/:id/revalidate', async (req, res) => {
     bot.id
   );
 
-  const refreshedBot = getBotById(bot.id);
+  const refreshedBot = getOwnedBotById(bot.id, req.auth!.userId);
   if (refreshedBot) {
     await syncBotTelegramExtras(refreshedBot, { clearAvatarIfEmpty: false }).catch(() => undefined);
   }
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.post('/bots/:id/test-connection', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1702,12 +1745,12 @@ apiRouter.post('/bots/:id/test-connection', async (req, res) => {
     durationMs: outcome.durationMs,
     httpStatus: outcome.httpStatus,
     response: outcome.rawResponse,
-    bot: sanitizeBotForClient(getBotById(bot.id)!),
+    bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!),
   });
 });
 
 apiRouter.delete('/bots/:id', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1717,13 +1760,14 @@ apiRouter.delete('/bots/:id', (req, res) => {
     VALUES (?, datetime('now'))
     ON CONFLICT(token_fingerprint) DO UPDATE SET deleted_at = datetime('now')
   `).run(bot.token_fingerprint);
-  db.prepare('DELETE FROM bots WHERE id = ?').run(bot.id);
+  db.prepare('DELETE FROM bots WHERE id = ? AND owner_user_id = ?').run(bot.id, req.auth!.userId);
   db.prepare('DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)').run(
     `bot_avatar_${bot.id}`,
     `bot_desc_pic_${bot.id}`,
     `bot_menu_button_${bot.id}`
   );
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'BOT_REMOVED',
     botId: null,
     botName: bot.name,
@@ -1739,15 +1783,19 @@ apiRouter.delete('/bots/:id', (req, res) => {
 // MESSAGE CENTER
 // ============================================================================
 apiRouter.get('/bots/:id/messages', (req, res) => {
-  const botId = Number(req.params.id);
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
   const rows = db
     .prepare('SELECT * FROM bot_messages WHERE bot_id = ? ORDER BY sent_at DESC LIMIT 100')
-    .all(botId);
+    .all(bot.id);
   res.json({ messages: rows });
 });
 
 apiRouter.post('/bots/:id/messages', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -1925,6 +1973,7 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
   }
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'MESSAGE_SENT',
     botId: bot.id,
     botName: bot.name,
@@ -1951,12 +2000,16 @@ apiRouter.post('/bots/:id/messages', async (req, res) => {
 // CHAT MANAGER
 // ============================================================================
 apiRouter.get('/bots/:id/chats', (req, res) => {
-  const botId = Number(req.params.id);
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
   const type = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : null;
   const search = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
 
   let sql = 'SELECT * FROM bot_chats WHERE bot_id = ?';
-  const params: SQLInputValue[] = [botId];
+  const params: SQLInputValue[] = [bot.id];
   if (type) {
     sql += ' AND chat_type = ?';
     params.push(type);
@@ -1972,7 +2025,7 @@ apiRouter.get('/bots/:id/chats', (req, res) => {
 });
 
 apiRouter.post('/bots/:id/chats/lookup', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2015,7 +2068,12 @@ apiRouter.post('/bots/:id/chats/lookup', async (req, res) => {
 });
 
 apiRouter.delete('/bots/:id/chats/:chatId', (req, res) => {
-  db.prepare('DELETE FROM bot_chats WHERE bot_id = ? AND chat_id = ?').run(Number(req.params.id), req.params.chatId);
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
+  db.prepare('DELETE FROM bot_chats WHERE bot_id = ? AND chat_id = ?').run(bot.id, req.params.chatId);
   res.json({ ok: true });
 });
 
@@ -2023,17 +2081,21 @@ apiRouter.delete('/bots/:id/chats/:chatId', (req, res) => {
 // COMMAND MANAGER
 // ============================================================================
 apiRouter.get('/bots/:id/commands', (req, res) => {
-  const botId = Number(req.params.id);
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
+  if (!bot) {
+    res.status(404).json({ error: 'Bot not found.' });
+    return;
+  }
   const scope = typeof req.query.scope === 'string' ? req.query.scope : 'default';
   const lang = typeof req.query.lang === 'string' ? req.query.lang : '';
   const commands = db
     .prepare('SELECT * FROM bot_commands WHERE bot_id = ? AND scope_type = ? AND language_code = ? ORDER BY sort_order ASC')
-    .all(botId, scope, lang);
+    .all(bot.id, scope, lang);
   res.json({ commands });
 });
 
 apiRouter.post('/bots/:id/commands/sync', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2082,6 +2144,7 @@ apiRouter.post('/bots/:id/commands/sync', async (req, res) => {
   });
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'COMMANDS_SYNCED',
     botId: bot.id,
     botName: bot.name,
@@ -2095,7 +2158,7 @@ apiRouter.post('/bots/:id/commands/sync', async (req, res) => {
 });
 
 apiRouter.post('/bots/:id/commands/pull', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2117,14 +2180,18 @@ apiRouter.post('/bots/:id/commands/pull', async (req, res) => {
 // KEYBOARD TEMPLATES
 // ============================================================================
 apiRouter.get('/templates', (req, res) => {
+  const userId = req.auth!.userId;
   const botId = req.query.botId ? Number(req.query.botId) : null;
   const rows = botId
-    ? db.prepare('SELECT * FROM bot_templates WHERE bot_id = ? OR bot_id IS NULL ORDER BY created_at DESC').all(botId)
-    : db.prepare('SELECT * FROM bot_templates ORDER BY created_at DESC').all();
+    ? db
+        .prepare('SELECT * FROM bot_templates WHERE owner_user_id = ? AND (bot_id = ? OR bot_id IS NULL) ORDER BY created_at DESC')
+        .all(userId, botId)
+    : db.prepare('SELECT * FROM bot_templates WHERE owner_user_id = ? ORDER BY created_at DESC').all(userId);
   res.json({ templates: rows });
 });
 
 apiRouter.post('/templates', (req, res) => {
+  const userId = req.auth!.userId;
   const name = String(req.body?.name ?? '').trim();
   const botId = req.body?.botId ? Number(req.body.botId) : null;
   const payload = req.body?.payload;
@@ -2132,14 +2199,18 @@ apiRouter.post('/templates', (req, res) => {
     res.status(400).json({ error: 'Template name is required.' });
     return;
   }
+  if (botId !== null && !getOwnedBotById(botId, userId)) {
+    res.status(404).json({ error: 'Selected bot not found.' });
+    return;
+  }
   const ins = db
-    .prepare(`INSERT INTO bot_templates (bot_id, name, template_type, payload_json) VALUES (?, ?, 'inline_keyboard', ?)`)
-    .run(botId, name, JSON.stringify(payload));
+    .prepare(`INSERT INTO bot_templates (owner_user_id, bot_id, name, template_type, payload_json) VALUES (?, ?, ?, 'inline_keyboard', ?)`)
+    .run(userId, botId, name, JSON.stringify(payload));
   res.status(201).json({ ok: true, id: Number(ins.lastInsertRowid) });
 });
 
 apiRouter.delete('/templates/:id', (req, res) => {
-  db.prepare('DELETE FROM bot_templates WHERE id = ?').run(Number(req.params.id));
+  db.prepare('DELETE FROM bot_templates WHERE id = ? AND owner_user_id = ?').run(Number(req.params.id), req.auth!.userId);
   res.json({ ok: true });
 });
 
@@ -2147,7 +2218,7 @@ apiRouter.delete('/templates/:id', (req, res) => {
 // WEBHOOK MANAGER & UPDATE MONITOR
 // ============================================================================
 apiRouter.get('/bots/:id/webhook', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2167,7 +2238,7 @@ apiRouter.get('/bots/:id/webhook', async (req, res) => {
   const suggestedUrl = `${baseUrl}/api/webhook/${bot.bot_key}`;
 
   res.json({
-    bot: sanitizeBotForClient(getBotById(bot.id)!),
+    bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!),
     webhookInfo: info.result || null,
     suggestedUrl,
     logs: recentLogs,
@@ -2175,7 +2246,7 @@ apiRouter.get('/bots/:id/webhook', async (req, res) => {
 });
 
 apiRouter.post('/bots/:id/webhook', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2214,6 +2285,7 @@ apiRouter.post('/bots/:id/webhook', async (req, res) => {
   `).run(url, encryptToken(secretToken), bot.id);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'WEBHOOK_CONFIGURED',
     botId: bot.id,
     botName: bot.name,
@@ -2223,11 +2295,11 @@ apiRouter.post('/bots/:id/webhook', async (req, res) => {
     ipAddress: getClientIp(req),
   });
 
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 apiRouter.delete('/bots/:id/webhook', async (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2241,6 +2313,7 @@ apiRouter.delete('/bots/:id/webhook', async (req, res) => {
     bot.id
   );
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'WEBHOOK_DELETED',
     botId: bot.id,
     botName: bot.name,
@@ -2249,7 +2322,7 @@ apiRouter.delete('/bots/:id/webhook', async (req, res) => {
     details: 'Removed webhook integration.',
     ipAddress: getClientIp(req),
   });
-  res.json({ ok: true, bot: sanitizeBotForClient(getBotById(bot.id)!) });
+  res.json({ ok: true, bot: sanitizeBotForClient(getOwnedBotById(bot.id, req.auth!.userId)!) });
 });
 
 // Direct Webhook Manager endpoints (Hosted URL + Bot Token directly without requiring saved bot)
@@ -2272,9 +2345,9 @@ apiRouter.post('/webhook/direct/set', async (req, res) => {
   }
 
   const fingerprint = hashTokenFingerprint(rawToken);
-  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
-    | BotRecord
-    | undefined;
+  const matchedBot = db
+    .prepare('SELECT * FROM bots WHERE token_fingerprint = ? AND owner_user_id = ?')
+    .get(fingerprint, req.auth!.userId) as BotRecord | undefined;
 
   const tgBody: Record<string, unknown> = {
     url,
@@ -2325,6 +2398,7 @@ apiRouter.post('/webhook/direct/set', async (req, res) => {
   }
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'WEBHOOK_CONFIGURED',
     botId: matchedBot?.id ?? null,
     botName: matchedBot?.name ?? 'Direct Bot Token',
@@ -2351,9 +2425,9 @@ apiRouter.post('/webhook/direct/info', async (req, res) => {
   }
 
   const fingerprint = hashTokenFingerprint(rawToken);
-  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
-    | BotRecord
-    | undefined;
+  const matchedBot = db
+    .prepare('SELECT * FROM bots WHERE token_fingerprint = ? AND owner_user_id = ?')
+    .get(fingerprint, req.auth!.userId) as BotRecord | undefined;
 
   const outcome = matchedBot
     ? await executeBotMethod(matchedBot, 'getWebhookInfo', {})
@@ -2389,9 +2463,9 @@ apiRouter.post('/webhook/direct/delete', async (req, res) => {
   }
 
   const fingerprint = hashTokenFingerprint(rawToken);
-  const matchedBot = db.prepare('SELECT * FROM bots WHERE token_fingerprint = ?').get(fingerprint) as
-    | BotRecord
-    | undefined;
+  const matchedBot = db
+    .prepare('SELECT * FROM bots WHERE token_fingerprint = ? AND owner_user_id = ?')
+    .get(fingerprint, req.auth!.userId) as BotRecord | undefined;
 
   const tgBody = { drop_pending_updates: dropPending };
   const outcome = matchedBot
@@ -2420,6 +2494,7 @@ apiRouter.post('/webhook/direct/delete', async (req, res) => {
   }
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'WEBHOOK_DELETED',
     botId: matchedBot?.id ?? null,
     botName: matchedBot?.name ?? 'Direct Bot Token',
@@ -2439,7 +2514,7 @@ apiRouter.post('/webhook/direct/delete', async (req, res) => {
 
 // Fires a real signed webhook payload through the exact incoming webhook receiver logic
 apiRouter.post('/bots/:id/webhook/simulate', (req, res) => {
-  const bot = getBotById(Number(req.params.id));
+  const bot = getOwnedBotById(Number(req.params.id), req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Bot not found.' });
     return;
@@ -2484,6 +2559,7 @@ apiRouter.post('/bots/:id/webhook/simulate', (req, res) => {
 });
 
 apiRouter.get('/updates', (req, res) => {
+  const userId = req.auth!.userId;
   const botId = req.query.botId ? Number(req.query.botId) : null;
   const type = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : null;
   const search = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
@@ -2491,8 +2567,8 @@ apiRouter.get('/updates', (req, res) => {
   const limit = 25;
   const offset = (page - 1) * limit;
 
-  const clauses: string[] = [];
-  const params: SQLInputValue[] = [];
+  const clauses: string[] = ['b.owner_user_id = ?'];
+  const params: SQLInputValue[] = [userId];
   if (botId) {
     clauses.push('u.bot_id = ?');
     params.push(botId);
@@ -2506,10 +2582,10 @@ apiRouter.get('/updates', (req, res) => {
     const pat = `%${search}%`;
     params.push(pat, pat, pat);
   }
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  const where = `WHERE ${clauses.join(' AND ')}`;
 
   const total = (
-    db.prepare(`SELECT COUNT(*) as cnt FROM bot_updates u ${where}`).get(...params) as { cnt: number }
+    db.prepare(`SELECT COUNT(*) as cnt FROM bot_updates u JOIN bots b ON b.id = u.bot_id ${where}`).get(...params) as { cnt: number }
   ).cnt;
 
   const updates = db
@@ -2534,7 +2610,7 @@ apiRouter.post('/explorer/execute', async (req, res) => {
   const method = String(req.body?.method ?? '').trim();
   const params = req.body?.params && typeof req.body.params === 'object' ? (req.body.params as Record<string, unknown>) : {};
 
-  const bot = getBotById(botId);
+  const bot = getOwnedBotById(botId, req.auth!.userId);
   if (!bot) {
     res.status(404).json({ error: 'Select a connected bot first.' });
     return;
@@ -2547,6 +2623,7 @@ apiRouter.post('/explorer/execute', async (req, res) => {
   const outcome = await executeBotMethod(bot, method, params);
 
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'API_EXPLORER_EXEC',
     botId: bot.id,
     botName: bot.name,
@@ -2566,19 +2643,21 @@ apiRouter.post('/explorer/execute', async (req, res) => {
   });
 });
 
-apiRouter.get('/explorer/saved', (_req, res) => {
+apiRouter.get('/explorer/saved', (req, res) => {
   const saved = db
     .prepare(`
       SELECT s.*, b.username as bot_username
       FROM saved_api_requests s
       LEFT JOIN bots b ON b.id = s.bot_id
+      WHERE s.owner_user_id = ?
       ORDER BY s.created_at DESC
     `)
-    .all();
+    .all(req.auth!.userId);
   res.json({ saved });
 });
 
 apiRouter.post('/explorer/saved', (req, res) => {
+  const userId = req.auth!.userId;
   const name = String(req.body?.name ?? '').trim();
   const method = String(req.body?.method ?? '').trim();
   const botId = req.body?.botId ? Number(req.body.botId) : null;
@@ -2588,23 +2667,28 @@ apiRouter.post('/explorer/saved', (req, res) => {
     res.status(400).json({ error: 'Request name and method are required.' });
     return;
   }
+  if (botId !== null && !getOwnedBotById(botId, userId)) {
+    res.status(404).json({ error: 'Selected bot not found.' });
+    return;
+  }
   const ins = db
-    .prepare(`INSERT INTO saved_api_requests (bot_id, name, method, params_json) VALUES (?, ?, ?, ?)`)
-    .run(botId, name, method, JSON.stringify(params));
+    .prepare(`INSERT INTO saved_api_requests (owner_user_id, bot_id, name, method, params_json) VALUES (?, ?, ?, ?, ?)`)
+    .run(userId, botId, name, method, JSON.stringify(params));
   res.status(201).json({ ok: true, id: Number(ins.lastInsertRowid) });
 });
 
 apiRouter.delete('/explorer/saved/:id', (req, res) => {
-  db.prepare('DELETE FROM saved_api_requests WHERE id = ?').run(Number(req.params.id));
+  db.prepare('DELETE FROM saved_api_requests WHERE id = ? AND owner_user_id = ?').run(Number(req.params.id), req.auth!.userId);
   res.json({ ok: true });
 });
 
 apiRouter.get('/debug/logs', (req, res) => {
+  const userId = req.auth!.userId;
   const filter = typeof req.query.filter === 'string' ? req.query.filter : 'all';
   const botId = req.query.botId ? Number(req.query.botId) : null;
 
-  const apiClauses: string[] = [];
-  const apiParams: SQLInputValue[] = [];
+  const apiClauses: string[] = ['b.owner_user_id = ?'];
+  const apiParams: SQLInputValue[] = [userId];
   if (botId) {
     apiClauses.push('a.bot_id = ?');
     apiParams.push(botId);
@@ -2617,14 +2701,14 @@ apiRouter.get('/debug/logs', (req, res) => {
            a.method as title, a.http_status, a.telegram_error_code, a.ok, a.duration_ms,
            a.request_payload_json, a.response_payload_json, a.error_message, a.created_at
     FROM api_logs a
-    LEFT JOIN bots b ON b.id = a.bot_id
-    ${apiClauses.length ? `WHERE ${apiClauses.join(' AND ')}` : ''}
+    JOIN bots b ON b.id = a.bot_id
+    WHERE ${apiClauses.join(' AND ')}
     ORDER BY a.created_at DESC
     LIMIT 60
   `;
 
-  const whClauses: string[] = [];
-  const whParams: SQLInputValue[] = [];
+  const whClauses: string[] = ['b.owner_user_id = ?'];
+  const whParams: SQLInputValue[] = [userId];
   if (botId) {
     whClauses.push('w.bot_id = ?');
     whParams.push(botId);
@@ -2640,8 +2724,8 @@ apiRouter.get('/debug/logs', (req, res) => {
            0 as duration_ms, w.payload_preview as request_payload_json,
            w.status as response_payload_json, w.error_message, w.created_at
     FROM webhook_logs w
-    LEFT JOIN bots b ON b.id = w.bot_id
-    ${whClauses.length ? `WHERE ${whClauses.join(' AND ')}` : ''}
+    JOIN bots b ON b.id = w.bot_id
+    WHERE ${whClauses.join(' AND ')}
     ORDER BY w.created_at DESC
     LIMIT 40
   `;
@@ -2660,6 +2744,7 @@ apiRouter.get('/debug/logs', (req, res) => {
 // ANALYTICS & ACTIVITY LOGS & EXPORTS
 // ============================================================================
 apiRouter.get('/analytics', (req, res) => {
+  const userId = req.auth!.userId;
   const range = typeof req.query.range === 'string' ? req.query.range : '14d';
   const botId = req.query.botId ? Number(req.query.botId) : null;
 
@@ -2670,11 +2755,11 @@ apiRouter.get('/analytics', (req, res) => {
   else if (range === '30d') daysBack = 30;
 
   const startDate = new Date(Date.now() - daysBack * 86400_000).toISOString().slice(0, 10);
-  const clauses = ['metric_date >= ?'];
-  const params: SQLInputValue[] = [startDate];
+  const clauses = ['metric_date >= ?', 'bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?)'];
+  const params: SQLInputValue[] = [startDate, userId];
   if (range === 'yesterday') {
     clauses.push('metric_date = ?');
-    params[0] = startDate;
+    params.push(startDate);
   }
   if (botId) {
     clauses.push('bot_id = ?');
@@ -2723,23 +2808,29 @@ apiRouter.get('/analytics', (req, res) => {
              COALESCE(SUM(d.updates_received), 0) as updates_received
       FROM bots b
       LEFT JOIN analytics_daily d ON d.bot_id = b.id AND d.metric_date >= ?
+      WHERE b.owner_user_id = ?
       GROUP BY b.id
       ORDER BY api_requests DESC
     `)
-    .all(startDate);
+    .all(startDate, userId);
+
+  const updateDistClause = botId
+    ? 'WHERE bot_id = ? AND bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?)'
+    : 'WHERE bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?)';
+  const updateDistParams: SQLInputValue[] = botId ? [botId, userId] : [userId];
 
   const updateDist = db
     .prepare(`
       SELECT update_type, COUNT(*) as count
       FROM bot_updates
-      ${botId ? 'WHERE bot_id = ?' : ''}
+      ${updateDistClause}
       GROUP BY update_type
       ORDER BY count DESC
     `)
-    .all(...(botId ? [botId] : []));
+    .all(...updateDistParams);
 
   const uniqueChats = (
-    db.prepare(`SELECT COUNT(*) as cnt FROM bot_chats ${botId ? 'WHERE bot_id = ?' : ''}`).get(...(botId ? [botId] : [])) as {
+    db.prepare(`SELECT COUNT(*) as cnt FROM bot_chats ${updateDistClause}`).get(...updateDistParams) as {
       cnt: number;
     }
   ).cnt;
@@ -2764,9 +2855,10 @@ apiRouter.get('/analytics/export', (req, res) => {
       SELECT d.metric_date, b.username as bot_username, d.messages_sent, d.updates_received, d.api_requests, d.api_success, d.api_failed
       FROM analytics_daily d
       JOIN bots b ON b.id = d.bot_id
+      WHERE b.owner_user_id = ?
       ORDER BY d.metric_date DESC
     `)
-    .all() as Record<string, unknown>[];
+    .all(req.auth!.userId) as Record<string, unknown>[];
 
   if (format === 'csv') {
     const header = 'date,bot_username,messages_sent,updates_received,api_requests,api_success,api_failed';
@@ -2785,14 +2877,15 @@ apiRouter.get('/analytics/export', (req, res) => {
 });
 
 apiRouter.get('/activity-logs', (req, res) => {
+  const userId = req.auth!.userId;
   const search = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
   const status = typeof req.query.status === 'string' && req.query.status !== 'all' ? req.query.status : null;
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 30;
   const offset = (page - 1) * limit;
 
-  const clauses: string[] = [];
-  const params: SQLInputValue[] = [];
+  const clauses: string[] = ['(owner_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?))'];
+  const params: SQLInputValue[] = [userId, userId];
   if (status) {
     clauses.push('status = ?');
     params.push(status);
@@ -2802,7 +2895,7 @@ apiRouter.get('/activity-logs', (req, res) => {
     const pat = `%${search}%`;
     params.push(pat, pat, pat);
   }
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const where = `WHERE ${clauses.join(' AND ')}`;
   const total = (db.prepare(`SELECT COUNT(*) as cnt FROM activity_logs ${where}`).get(...params) as { cnt: number }).cnt;
   const logs = db
     .prepare(`SELECT * FROM activity_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
@@ -2811,8 +2904,15 @@ apiRouter.get('/activity-logs', (req, res) => {
   res.json({ logs, total, page, totalPages: Math.max(1, Math.ceil(total / limit)) });
 });
 
-apiRouter.get('/activity-logs/export', (_req, res) => {
-  const rows = db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 500').all() as Record<string, unknown>[];
+apiRouter.get('/activity-logs/export', (req, res) => {
+  const userId = req.auth!.userId;
+  const rows = db
+    .prepare(
+      `SELECT * FROM activity_logs
+       WHERE (owner_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?))
+       ORDER BY created_at DESC LIMIT 500`
+    )
+    .all(userId, userId) as Record<string, unknown>[];
   const header = 'id,action,bot_name,status,related_resource,details,created_at';
   const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = rows.map(
@@ -2972,6 +3072,9 @@ apiRouter.delete('/admin/users/:id', requireAdmin, (req, res) => {
     revokeSessionTokenHash(row.session_token_hash, row.expires_at);
   }
   db.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(target.id);
+  db.prepare('DELETE FROM bots WHERE owner_user_id = ?').run(target.id);
+  db.prepare('DELETE FROM bot_templates WHERE owner_user_id = ?').run(target.id);
+  db.prepare('DELETE FROM saved_api_requests WHERE owner_user_id = ?').run(target.id);
   db.prepare('DELETE FROM admin_users WHERE id = ?').run(target.id);
 
   logAdminAudit({
@@ -3054,14 +3157,14 @@ apiRouter.get('/notifications', (req, res) => {
   const isAdmin = req.auth!.role === 'admin';
   const userId = req.auth!.userId;
   const whereClause = isAdmin
-    ? `(target_user_id IS NULL OR target_user_id = ? OR recipient_role = 'admin')`
-    : `(target_user_id = ? OR (target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
+    ? `(target_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?) OR (bot_id IS NULL AND (target_user_id IS NULL OR recipient_role = 'admin')))`
+    : `(target_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?) OR (bot_id IS NULL AND target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
 
   const items = db
     .prepare(`SELECT * FROM notifications WHERE ${whereClause} ORDER BY created_at DESC, id DESC LIMIT 30`)
-    .all(userId);
+    .all(userId, userId);
   const unread = (
-    db.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0 AND ${whereClause}`).get(userId) as { cnt: number }
+    db.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE is_read = 0 AND ${whereClause}`).get(userId, userId) as { cnt: number }
   ).cnt;
   res.json({ notifications: items, unread });
 });
@@ -3070,10 +3173,10 @@ apiRouter.post('/notifications/read-all', (req, res) => {
   const isAdmin = req.auth!.role === 'admin';
   const userId = req.auth!.userId;
   const whereClause = isAdmin
-    ? `(target_user_id IS NULL OR target_user_id = ? OR recipient_role = 'admin')`
-    : `(target_user_id = ? OR (target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
+    ? `(target_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?) OR (bot_id IS NULL AND (target_user_id IS NULL OR recipient_role = 'admin')))`
+    : `(target_user_id = ? OR bot_id IN (SELECT id FROM bots WHERE owner_user_id = ?) OR (bot_id IS NULL AND target_user_id IS NULL AND recipient_role IN ('all', 'user')))`;
 
-  db.prepare(`UPDATE notifications SET is_read = 1 WHERE is_read = 0 AND ${whereClause}`).run(userId);
+  db.prepare(`UPDATE notifications SET is_read = 1 WHERE is_read = 0 AND ${whereClause}`).run(userId, userId);
   res.json({ ok: true });
 });
 
@@ -3111,6 +3214,7 @@ apiRouter.patch('/settings', (req, res) => {
     }
   }
   logActivity({
+    ownerUserId: req.auth!.userId,
     action: 'SETTINGS_UPDATED',
     status: 'success',
     relatedResource: 'app_settings',
@@ -3134,8 +3238,14 @@ apiRouter.get('/system/health', (req, res) => {
     }
   ).cnt;
   const recentErrors = db
-    .prepare(`SELECT method, http_status, error_message, created_at FROM api_logs WHERE ok = 0 ORDER BY created_at DESC LIMIT 5`)
-    .all();
+    .prepare(
+      `SELECT a.method, a.http_status, a.error_message, a.created_at
+       FROM api_logs a
+       JOIN bots b ON b.id = a.bot_id
+       WHERE a.ok = 0 AND b.owner_user_id = ?
+       ORDER BY a.created_at DESC LIMIT 5`
+    )
+    .all(req.auth!.userId);
 
   const proto = req.headers['x-forwarded-proto'] || req.protocol;
   const serverless = isServerlessRuntime();
@@ -3161,13 +3271,22 @@ apiRouter.get('/system/health', (req, res) => {
 });
 
 apiRouter.get('/backup/export', requireAdmin, (req, res) => {
-  // Never export raw tokens or decrypted secrets! Export sanitized bot metadata + settings + commands + templates + saved requests.
-  const bots = (db.prepare('SELECT * FROM bots').all() as unknown as BotRecord[]).map((b) => sanitizeBotForClient(b));
-  const botSettings = db.prepare('SELECT * FROM bot_settings').all();
-  const commands = db.prepare('SELECT * FROM bot_commands').all();
-  const templates = db.prepare('SELECT * FROM bot_templates').all();
-  const chats = db.prepare('SELECT * FROM bot_chats').all();
-  const savedRequests = db.prepare('SELECT * FROM saved_api_requests').all();
+  const userId = req.auth!.userId;
+  // Never export raw tokens or decrypted secrets! Export sanitized bot metadata + settings + commands + templates + saved requests owned by current admin.
+  const bots = (
+    db.prepare('SELECT * FROM bots WHERE owner_user_id = ?').all(userId) as unknown as BotRecord[]
+  ).map((b) => sanitizeBotForClient(b));
+  const botSettings = db
+    .prepare('SELECT bs.* FROM bot_settings bs JOIN bots b ON b.id = bs.bot_id WHERE b.owner_user_id = ?')
+    .all(userId);
+  const commands = db
+    .prepare('SELECT bc.* FROM bot_commands bc JOIN bots b ON b.id = bc.bot_id WHERE b.owner_user_id = ?')
+    .all(userId);
+  const templates = db.prepare('SELECT * FROM bot_templates WHERE owner_user_id = ?').all(userId);
+  const chats = db
+    .prepare('SELECT ch.* FROM bot_chats ch JOIN bots b ON b.id = ch.bot_id WHERE b.owner_user_id = ?')
+    .all(userId);
+  const savedRequests = db.prepare('SELECT * FROM saved_api_requests WHERE owner_user_id = ?').all(userId);
   const appSettings = db.prepare('SELECT * FROM app_settings').all();
 
   const data = {
@@ -3188,6 +3307,7 @@ apiRouter.get('/backup/export', requireAdmin, (req, res) => {
   };
 
   logActivity({
+    ownerUserId: userId,
     action: 'BACKUP_CREATED',
     status: 'success',
     relatedResource: 'json_export',
@@ -3212,6 +3332,7 @@ apiRouter.get('/backup/sql-schema', requireAdmin, (_req, res) => {
 });
 
 apiRouter.post('/backup/restore', requireAdmin, (req, res) => {
+  const userId = req.auth!.userId;
   const body = req.body;
   if (!body || typeof body !== 'object' || !body.checksum || !body.data) {
     res.status(400).json({ error: 'Invalid backup structure. Expected { checksum, data }.' });
@@ -3241,9 +3362,10 @@ apiRouter.post('/backup/restore', requireAdmin, (req, res) => {
   if (Array.isArray(data.templates)) {
     for (const t of data.templates) {
       if (t.name && t.payload_json) {
-        const exists = db.prepare('SELECT id FROM bot_templates WHERE name = ?').get(t.name);
+        const exists = db.prepare('SELECT id FROM bot_templates WHERE name = ? AND owner_user_id = ?').get(t.name, userId);
         if (!exists) {
-          db.prepare('INSERT INTO bot_templates (name, template_type, payload_json) VALUES (?, ?, ?)').run(
+          db.prepare('INSERT INTO bot_templates (owner_user_id, name, template_type, payload_json) VALUES (?, ?, ?, ?)').run(
+            userId,
             String(t.name),
             'inline_keyboard',
             String(t.payload_json)
@@ -3256,9 +3378,12 @@ apiRouter.post('/backup/restore', requireAdmin, (req, res) => {
   if (Array.isArray(data.savedRequests)) {
     for (const r of data.savedRequests) {
       if (r.name && r.method) {
-        const exists = db.prepare('SELECT id FROM saved_api_requests WHERE name = ?').get(r.name);
+        const exists = db
+          .prepare('SELECT id FROM saved_api_requests WHERE name = ? AND owner_user_id = ?')
+          .get(r.name, userId);
         if (!exists) {
-          db.prepare('INSERT INTO saved_api_requests (name, method, params_json) VALUES (?, ?, ?)').run(
+          db.prepare('INSERT INTO saved_api_requests (owner_user_id, name, method, params_json) VALUES (?, ?, ?, ?)').run(
+            userId,
             String(r.name),
             String(r.method),
             String(r.params_json || '{}')
@@ -3270,6 +3395,7 @@ apiRouter.post('/backup/restore', requireAdmin, (req, res) => {
   }
 
   logActivity({
+    ownerUserId: userId,
     action: 'BACKUP_RESTORED',
     status: 'success',
     relatedResource: 'json_restore',

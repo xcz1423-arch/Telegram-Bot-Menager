@@ -60,6 +60,7 @@ const SCHEMA_SQL = `
   -- 2. bots
   CREATE TABLE IF NOT EXISTS bots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER,
     bot_key TEXT NOT NULL UNIQUE,
     telegram_bot_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -166,6 +167,7 @@ const SCHEMA_SQL = `
   -- 8. bot_templates
   CREATE TABLE IF NOT EXISTS bot_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER,
     bot_id INTEGER,
     name TEXT NOT NULL,
     template_type TEXT NOT NULL DEFAULT 'inline_keyboard',
@@ -207,6 +209,7 @@ const SCHEMA_SQL = `
   -- 11. activity_logs
   CREATE TABLE IF NOT EXISTS activity_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER,
     action TEXT NOT NULL,
     bot_id INTEGER,
     bot_name TEXT,
@@ -250,6 +253,7 @@ const SCHEMA_SQL = `
   -- 14. saved_api_requests
   CREATE TABLE IF NOT EXISTS saved_api_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER,
     bot_id INTEGER,
     name TEXT NOT NULL,
     method TEXT NOT NULL,
@@ -361,6 +365,12 @@ function runSchemaMigrations(driver: DbDriver): void {
     }
   }
 
+  ensureColumn(driver, 'bots', 'owner_user_id', `INTEGER`);
+  driver.exec(`CREATE INDEX IF NOT EXISTS idx_bots_owner_user ON bots(owner_user_id, created_at DESC);`);
+  ensureColumn(driver, 'bot_templates', 'owner_user_id', `INTEGER`);
+  ensureColumn(driver, 'saved_api_requests', 'owner_user_id', `INTEGER`);
+  ensureColumn(driver, 'activity_logs', 'owner_user_id', `INTEGER`);
+
   ensureColumn(driver, 'notifications', 'target_user_id', `INTEGER`);
   ensureColumn(driver, 'notifications', 'recipient_role', `TEXT NOT NULL DEFAULT 'all'`);
   ensureColumn(driver, 'notifications', 'kind', `TEXT NOT NULL DEFAULT 'system'`);
@@ -374,6 +384,20 @@ function runSchemaMigrations(driver: DbDriver): void {
       deleted_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Assign legacy unowned bots & bot-scoped notifications to primary administrator so non-admin users never inherit them
+  const primaryOwner =
+    (driver.prepare(`SELECT id FROM admin_users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined) ||
+    (driver.prepare(`SELECT id FROM admin_users ORDER BY id ASC LIMIT 1`).get() as { id: number } | undefined);
+
+  if (primaryOwner) {
+    driver.prepare(`UPDATE bots SET owner_user_id = ? WHERE owner_user_id IS NULL`).run(primaryOwner.id);
+    driver.prepare(`UPDATE bot_templates SET owner_user_id = ? WHERE owner_user_id IS NULL`).run(primaryOwner.id);
+    driver.prepare(`UPDATE saved_api_requests SET owner_user_id = ? WHERE owner_user_id IS NULL`).run(primaryOwner.id);
+    driver
+      .prepare(`UPDATE notifications SET target_user_id = ? WHERE bot_id IS NOT NULL AND target_user_id IS NULL`)
+      .run(primaryOwner.id);
+  }
 }
 
 interface SqlJsDatabase {
@@ -846,6 +870,24 @@ function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDat
       }
     }
 
+    const srcUserIdToUsername = new Map<number, string>();
+    for (const u of querySqlJsAll(sourceDb, `SELECT id, username FROM admin_users`)) {
+      const uid = Number(u.id || 0);
+      const uname = String(u.username || '').trim().toLowerCase();
+      if (uid > 0 && uname) srcUserIdToUsername.set(uid, uname);
+    }
+    const targetUsernameToId = new Map<string, number>();
+    for (const u of querySqlJsAll(targetDb, `SELECT id, username FROM admin_users`)) {
+      const uid = Number(u.id || 0);
+      const uname = String(u.username || '').trim().toLowerCase();
+      if (uid > 0 && uname) targetUsernameToId.set(uname, uid);
+    }
+    const fallbackAdminRow = querySqlJsAll(
+      targetDb,
+      `SELECT id FROM admin_users ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, id ASC LIMIT 1`
+    )[0];
+    const fallbackOwnerId = fallbackAdminRow ? Number(fallbackAdminRow.id || 0) || null : null;
+
     const existingBotByFp = new Map<string, { id: number; updatedAt: string }>();
     for (const b of querySqlJsAll(targetDb, `SELECT id, token_fingerprint, updated_at FROM bots`)) {
       const fp = String(b.token_fingerprint || '');
@@ -858,6 +900,10 @@ function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDat
     for (const b of srcBots) {
       const fp = String(b.token_fingerprint || '');
       if (!fp) continue;
+      const srcOwnerId = Number(b.owner_user_id || 0);
+      const srcOwnerUname = srcOwnerId > 0 ? srcUserIdToUsername.get(srcOwnerId) : undefined;
+      const mappedOwnerId = (srcOwnerUname ? targetUsernameToId.get(srcOwnerUname) : undefined) ?? fallbackOwnerId;
+
       const existingTarget = existingBotByFp.get(fp);
       if (existingTarget) {
         const srcUpdatedAt = String(b.updated_at || '');
@@ -891,14 +937,15 @@ function mergeMissingAccountsAndBots(targetDb: SqlJsDatabase, sourceDb: SqlJsDat
       const newBotId = runSqlJs(
         targetDb,
         `INSERT OR IGNORE INTO bots (
-          bot_key, telegram_bot_id, name, username, short_description, description,
+          owner_user_id, bot_key, telegram_bot_id, name, username, short_description, description,
           mode, encrypted_token, token_fingerprint, token_masked,
           connection_status, webhook_status, webhook_url, webhook_secret_encrypted,
           pending_update_count, last_webhook_error, can_join_groups,
           can_read_all_group_messages, supports_inline_queries,
           last_checked_at, last_activity_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          mappedOwnerId,
           b.bot_key,
           b.telegram_bot_id,
           b.name,
@@ -1051,6 +1098,7 @@ export function setSetting(key: string, value: string): void {
 
 export function logActivity(params: {
   action: string;
+  ownerUserId?: number | null;
   botId?: number | null;
   botName?: string | null;
   status?: 'success' | 'warning' | 'failed';
@@ -1058,10 +1106,18 @@ export function logActivity(params: {
   details?: string | null;
   ipAddress?: string | null;
 }): void {
+  let resolvedOwnerId = params.ownerUserId ?? null;
+  if (resolvedOwnerId === null && params.botId) {
+    const botRow = db.prepare('SELECT owner_user_id FROM bots WHERE id = ?').get(params.botId) as
+      | { owner_user_id: number | null }
+      | undefined;
+    resolvedOwnerId = botRow?.owner_user_id ?? null;
+  }
   db.prepare(`
-    INSERT INTO activity_logs (action, bot_id, bot_name, status, related_resource, details, ip_address)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO activity_logs (owner_user_id, action, bot_id, bot_name, status, related_resource, details, ip_address)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
+    resolvedOwnerId,
     params.action,
     params.botId ?? null,
     params.botName ?? null,
@@ -1085,6 +1141,13 @@ export function pushNotification(params: {
   senderBadge?: string | null;
   senderIp?: string | null;
 }): void {
+  let resolvedTargetUserId = params.targetUserId ?? null;
+  if (resolvedTargetUserId === null && params.botId) {
+    const botRow = db.prepare('SELECT owner_user_id FROM bots WHERE id = ?').get(params.botId) as
+      | { owner_user_id: number | null }
+      | undefined;
+    resolvedTargetUserId = botRow?.owner_user_id ?? null;
+  }
   db.prepare(`
     INSERT INTO notifications (
       bot_id, target_user_id, recipient_role, kind, severity, title, message,
@@ -1093,7 +1156,7 @@ export function pushNotification(params: {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.botId ?? null,
-    params.targetUserId ?? null,
+    resolvedTargetUserId,
     params.recipientRole ?? 'all',
     params.kind ?? 'system',
     params.severity ?? 'info',

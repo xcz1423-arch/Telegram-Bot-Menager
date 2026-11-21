@@ -17,6 +17,7 @@ import { AnalyticsView, ActivityLogsView } from './components/views/AnalyticsAct
 import { SettingsHealthBackupView } from './components/views/SettingsHealthBackupView';
 import { ToastContainer } from './components/ui/Primitives';
 import { ThemeBackdrop } from './components/layout/ThemeBackdrop';
+import { OfflineDetectionOverlay } from './components/layout/OfflineDetectionOverlay';
 import { toSmallCaps } from './lib/smallCaps';
 
 const SKIP_SMALL_CAPS_TAGS = new Set(['INPUT', 'TEXTAREA', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'NOSCRIPT']);
@@ -289,6 +290,11 @@ export default function App() {
       setSetupRequired(false);
       setBots([]);
       setActiveBotId(null);
+      setNotifications([]);
+      setUnreadCount(0);
+      setPrefillChatId(undefined);
+      setPrefillMarkup(undefined);
+      setActiveTab('dashboard');
     }
   };
 
@@ -298,36 +304,41 @@ export default function App() {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: 1 })));
   };
 
-  if (booting) {
-    return (
-      <div className="relative min-h-screen flex items-center justify-center bg-[#F4F6FD] dark:bg-[#070815] text-[#73798C] dark:text-slate-300 text-xs font-mono">
-        <ThemeBackdrop variant="auth" />
-        <span className="relative z-10 px-4 py-2 rounded-xl bg-white/75 dark:bg-[#0B0D1F]/75 backdrop-blur-xl border border-white/80 dark:border-[#7C6BFF]/25">
-          Loading XC BOT CONTROL...
-        </span>
-      </div>
-    );
-  }
-
-  if (!admin) {
-    return (
-      <AuthGate
-        setupRequired={setupRequired}
-        blockedMessage={blockedMessage}
-        theme={theme}
-        onToggleTheme={cycleTheme}
-        onAuthenticated={(user) => {
-          setAdmin(user);
-          setSetupRequired(false);
-          setBlockedMessage(null);
-        }}
-      />
-    );
-  }
+  const handleNetworkRestored = useCallback(() => {
+    if (admin) {
+      void loadWorkspaceData();
+    }
+  }, [admin, loadWorkspaceData]);
 
   return (
     <>
-      <AppShell
+      {booting ? (
+        <div className="relative min-h-screen flex items-center justify-center bg-[#F4F6FD] dark:bg-[#070815] text-[#73798C] dark:text-slate-300 text-xs font-mono">
+          <ThemeBackdrop variant="auth" />
+          <span className="relative z-10 px-4 py-2 rounded-xl bg-white/75 dark:bg-[#0B0D1F]/75 backdrop-blur-xl border border-white/80 dark:border-[#7C6BFF]/25">
+            Loading XC BOT CONTROL...
+          </span>
+        </div>
+      ) : !admin ? (
+        <AuthGate
+          setupRequired={setupRequired}
+          blockedMessage={blockedMessage}
+          theme={theme}
+          onToggleTheme={cycleTheme}
+          onAuthenticated={(user) => {
+            setBots([]);
+            setActiveBotId(null);
+            setNotifications([]);
+            setUnreadCount(0);
+            setActiveTab('dashboard');
+            setAdmin(user);
+            setSetupRequired(false);
+            setBlockedMessage(null);
+          }}
+        />
+      ) : (
+        <>
+          <AppShell
         admin={admin}
         appName={appName}
         activeTab={activeTab}
@@ -485,6 +496,10 @@ export default function App() {
         toasts={toasts}
         onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
       />
+        </>
+      )}
+
+      <OfflineDetectionOverlay onRestored={handleNetworkRestored} />
     </>
   );
 }

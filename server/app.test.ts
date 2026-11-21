@@ -446,6 +446,119 @@ test('admin-only backup routes, cross-device login bots & avatar, and stale vaul
     afterDeleteJson.bots.some((b) => b.id === targetBotId),
     false
   );
+
+  // 14. Strict per-user bot isolation: Admin's connected bots are invisible to normal users, and vice versa
+  const addAdminPrivateBot = await fetch(`${baseUrl}/api/bots`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: adminCookie,
+      'X-CSRF-Token': adminBody.csrfToken,
+    },
+    body: JSON.stringify({ token: 'sandbox:admin_isolated_bot', name: 'Admin Private Bot' }),
+  });
+  assert.equal(addAdminPrivateBot.status, 201);
+  const adminPrivJson = (await addAdminPrivateBot.json()) as { bot: { id: number; username: string } };
+  const adminPrivBotId = adminPrivJson.bot.id;
+
+  // Normal user must see 0 bots across every list/dashboard/telemetry/notification endpoint
+  const userBotsRes = await fetch(`${baseUrl}/api/bots`, { headers: { Cookie: userCookie } });
+  assert.equal(userBotsRes.status, 200);
+  const userBotsJson = (await userBotsRes.json()) as { bots: unknown[] };
+  assert.equal(userBotsJson.bots.length, 0);
+
+  const userDashRes = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: userCookie } });
+  assert.equal(userDashRes.status, 200);
+  const userDashJson = (await userDashRes.json()) as {
+    stats: { totalBots: number; activeBots: number };
+    bots: unknown[];
+  };
+  assert.equal(userDashJson.stats.totalBots, 0);
+  assert.equal(userDashJson.bots.length, 0);
+
+  const userNotifsRes = await fetch(`${baseUrl}/api/notifications`, { headers: { Cookie: userCookie } });
+  assert.equal(userNotifsRes.status, 200);
+  const userNotifsJson = (await userNotifsRes.json()) as {
+    notifications: Array<{ bot_id: number | null; title: string }>;
+  };
+  assert.equal(
+    userNotifsJson.notifications.some((n) => n.bot_id === adminPrivBotId || n.title === 'Bot Connected'),
+    false
+  );
+
+  for (const isolatedPath of [
+    `/api/bots/${adminPrivBotId}`,
+    `/api/bots/${adminPrivBotId}/messages`,
+    `/api/bots/${adminPrivBotId}/chats`,
+    `/api/bots/${adminPrivBotId}/commands`,
+  ]) {
+    const r = await fetch(`${baseUrl}${isolatedPath}`, { headers: { Cookie: userCookie } });
+    assert.equal(r.status, 404, `Expected 404 for ${isolatedPath}`);
+  }
+
+  const crossPatch = await fetch(`${baseUrl}/api/bots/${adminPrivBotId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+    body: JSON.stringify({ name: 'Hijacked Name' }),
+  });
+  assert.equal(crossPatch.status, 404);
+
+  const crossDelete = await fetch(`${baseUrl}/api/bots/${adminPrivBotId}`, {
+    method: 'DELETE',
+    headers: {
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+  });
+  assert.equal(crossDelete.status, 404);
+
+  // Reusing Admin's token as normal user returns 409 without leaking Admin's @username
+  const dupTokenCheck = await fetch(`${baseUrl}/api/bots/validate-token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+    body: JSON.stringify({ token: 'sandbox:admin_isolated_bot' }),
+  });
+  assert.equal(dupTokenCheck.status, 409);
+  const dupTokenJson = (await dupTokenCheck.json()) as { error: string };
+  assert.doesNotMatch(dupTokenJson.error, /admin_isolated_bot/);
+
+  // Normal user connects their own bot -> user sees only their own bot; Admin still sees only Admin's bot
+  const addUserBot = await fetch(`${baseUrl}/api/bots`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: userCookie,
+      'X-CSRF-Token': userBody.csrfToken,
+    },
+    body: JSON.stringify({ token: 'sandbox:user_own_bot', name: 'User Own Bot' }),
+  });
+  assert.equal(addUserBot.status, 201);
+
+  const userBotsAfter = (await (await fetch(`${baseUrl}/api/bots`, { headers: { Cookie: userCookie } })).json()) as {
+    bots: Array<{ username: string }>;
+  };
+  assert.equal(userBotsAfter.bots.length, 1);
+  assert.equal(userBotsAfter.bots[0].username, 'user_own_bot');
+
+  const adminBotsAfter = (await (await fetch(`${baseUrl}/api/bots`, { headers: { Cookie: adminCookie } })).json()) as {
+    bots: Array<{ username: string }>;
+  };
+  assert.equal(
+    adminBotsAfter.bots.some((b) => b.username === 'user_own_bot'),
+    false
+  );
+  assert.equal(
+    adminBotsAfter.bots.some((b) => b.username === 'admin_isolated_bot'),
+    true
+  );
 });
 
 
