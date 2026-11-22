@@ -20,8 +20,8 @@ export function ThemeBackdrop({ variant = 'workspace' }: { variant?: 'auth' | 'w
       <div
         className={`block dark:hidden absolute inset-0 ${
           variant === 'auth'
-            ? 'bg-gradient-to-b from-white/10 via-transparent to-[#EEF1FC]/25'
-            : 'bg-white/24'
+            ? 'bg-gradient-to-b from-white/5 via-transparent to-[#EEF1FC]/18'
+            : 'bg-white/10'
         }`}
       />
 

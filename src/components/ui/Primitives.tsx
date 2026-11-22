@@ -53,7 +53,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
       type="button"
       onClick={handleCopy}
       aria-label={copied ? 'Copied' : label}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] text-xs font-medium rounded-lg border border-[#E8EAF1] dark:border-slate-700/80 bg-white dark:bg-[#101421] text-[#171A2B] dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] text-xs font-medium rounded-lg border border-white/80 dark:border-slate-700/80 bg-white/60 dark:bg-[#101421] backdrop-blur-md text-[#171A2B] dark:text-slate-200 hover:bg-white/80 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
     >
       {copied ? <Check className="w-3.5 h-3.5 text-[#20C997]" /> : <Copy className="w-3.5 h-3.5" />}
       <span>{copied ? 'Copied' : label}</span>
@@ -96,7 +96,7 @@ export function Modal({
     >
       <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
       <div
-        className={`relative z-10 w-full ${maxWidth} max-h-[86vh] flex flex-col bg-white dark:bg-[#151B2B] text-[#171A2B] dark:text-slate-100 rounded-2xl border border-[#E8EAF1] dark:border-slate-800 shadow-2xl overflow-hidden`}
+        className={`relative z-10 w-full ${maxWidth} max-h-[86vh] flex flex-col bg-white/74 dark:bg-[#151B2B] backdrop-blur-2xl dark:backdrop-blur-none text-[#171A2B] dark:text-slate-100 rounded-2xl border border-white/85 dark:border-slate-800 shadow-[0_24px_64px_rgba(68,56,202,0.20),inset_0_1px_0_rgba(255,255,255,0.9)] dark:shadow-2xl overflow-hidden`}
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-[#E8EAF1] dark:border-slate-800 shrink-0">
           <div className="min-w-0">
@@ -181,7 +181,7 @@ export function EmptyState({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-12 px-4 border border-dashed border-[#E8EAF1] dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-[#101421]/60">
+    <div className="flex flex-col items-center justify-center text-center py-12 px-4 border border-dashed border-white/80 dark:border-slate-800 rounded-2xl bg-white/42 dark:bg-[#101421]/60 backdrop-blur-xl">
       <div className="w-11 h-11 rounded-xl bg-[#6555E8]/10 dark:bg-[#7565F6]/15 text-[#6555E8] dark:text-[#7565F6] flex items-center justify-center mb-3">
         <Icon className="w-5 h-5" />
       </div>
@@ -245,7 +245,7 @@ export function ToastContainer({
             key={t.id}
             role="status"
             data-testid="toast-notification"
-            className="xc-toast-enter pointer-events-auto relative overflow-hidden flex items-start gap-3 pl-4 pr-3 py-3 rounded-2xl bg-white/95 dark:bg-[#151B2B]/95 backdrop-blur-md border border-[#E8EAF1] dark:border-slate-700/90 shadow-[0_14px_34px_rgba(9,11,20,0.18)]"
+            className="xc-toast-enter pointer-events-auto relative overflow-hidden flex items-start gap-3 pl-4 pr-3 py-3 rounded-2xl bg-white/72 dark:bg-[#151B2B]/95 backdrop-blur-2xl dark:backdrop-blur-md border border-white/85 dark:border-slate-700/90 shadow-[0_14px_34px_rgba(68,56,202,0.18),inset_0_1px_0_rgba(255,255,255,0.9)] dark:shadow-[0_14px_34px_rgba(9,11,20,0.18)]"
           >
             <span className={`absolute left-0 top-0 bottom-0 w-1 ${accentClass}`} aria-hidden="true" />
             <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${iconBgClass}`}>
