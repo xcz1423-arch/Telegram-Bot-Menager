@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { RotateCw } from 'lucide-react';
 import {
   completeRestoredAnimation,
   createInitialNetworkStatus,
@@ -20,6 +21,7 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
     createInitialNetworkStatus(typeof navigator !== 'undefined' ? navigator.onLine : true)
   );
   const [checking, setChecking] = useState(false);
+  const [retryFeedback, setRetryFeedback] = useState(false);
   const [cachedOfflineSrc, setCachedOfflineSrc] = useState<string>(OFFLINE_IMAGE_PATH);
   const [cachedOnlineSrc, setCachedOnlineSrc] = useState<string>(ONLINE_IMAGE_PATH);
 
@@ -56,12 +58,14 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
   }, []);
 
   const triggerRestoredFlow = useCallback(() => {
+    setRetryFeedback(false);
     setStatus((prev) => transitionToOnline(prev));
     onRestoredRef.current?.();
   }, []);
 
   useEffect(() => {
     const onOffline = () => {
+      setRetryFeedback(false);
       setStatus((prev) => transitionToOffline(prev));
     };
 
@@ -70,6 +74,7 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
         if (!prev.hasBeenOffline && prev.phase !== 'offline') {
           return prev;
         }
+        setRetryFeedback(false);
         onRestoredRef.current?.();
         return transitionToOnline(prev);
       });
@@ -118,10 +123,20 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
   const handleRetry = async () => {
     if (checking) return;
     setChecking(true);
+    setRetryFeedback(false);
+
+    const start = Date.now();
     const ok = await probeConnectivity();
+    const elapsed = Date.now() - start;
+    if (elapsed < 350) {
+      await new Promise((resolve) => setTimeout(resolve, 350 - elapsed));
+    }
+
     setChecking(false);
     if (ok) {
       triggerRestoredFlow();
+    } else {
+      setRetryFeedback(true);
     }
   };
 
@@ -138,7 +153,7 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
       aria-modal="true"
       aria-live="assertive"
       aria-label={isRestored ? "You're Online!" : 'No Internet Connection'}
-      className="fixed inset-0 z-[9999] flex items-center justify-center select-none"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto"
       style={{ backgroundColor: isRestored ? '#02070D' : '#020206' }}
     >
       {isRestored ? (
@@ -152,32 +167,48 @@ export const OfflineDetectionOverlay: React.FC<OfflineDetectionOverlayProps> = (
           <img
             src={cachedOnlineSrc}
             alt="You're Online! Internet connection is active."
-            className="max-w-full max-h-screen w-auto h-auto object-contain block"
+            className="max-w-full max-h-[94vh] w-auto h-auto object-contain block"
             draggable={false}
           />
         </div>
       ) : (
-        <div
-          className="relative inline-flex items-center justify-center"
-          style={{
-            WebkitMaskImage: 'radial-gradient(ellipse 94% 94% at 50% 50%, #000 78%, transparent 100%)',
-            maskImage: 'radial-gradient(ellipse 94% 94% at 50% 50%, #000 78%, transparent 100%)',
-          }}
-        >
-          <img
-            src={cachedOfflineSrc}
-            alt="No Internet Connection. Looks like you're offline. Please check your internet connection and try again."
-            className="max-w-full max-h-screen w-auto h-auto object-contain block"
-            draggable={false}
-          />
-          <button
-            type="button"
-            onClick={handleRetry}
-            disabled={checking}
-            aria-label="Retry"
-            title="Retry"
-            className="absolute bottom-[6%] left-1/2 -translate-x-1/2 w-[26%] h-[13%] rounded-full bg-transparent cursor-pointer focus:outline-none"
-          />
+        <div className="relative flex flex-col items-center justify-center w-full max-w-[760px]">
+          <div
+            className="w-full aspect-[1280/690] overflow-hidden"
+            style={{
+              WebkitMaskImage:
+                'radial-gradient(ellipse 96% 98% at 50% 48%, #000 84%, transparent 100%)',
+              maskImage:
+                'radial-gradient(ellipse 96% 98% at 50% 48%, #000 84%, transparent 100%)',
+            }}
+          >
+            <img
+              src={cachedOfflineSrc}
+              alt="No Internet Connection. Looks like you're offline. Please check your internet connection and try again."
+              className="w-full h-full object-cover object-top block"
+              draggable={false}
+            />
+          </div>
+
+          <div className="mt-3 sm:mt-4 w-full max-w-[540px] flex items-center justify-center gap-4 px-2">
+            <div className="h-[1.5px] flex-1 bg-gradient-to-r from-transparent to-[#6E49FF]/75" />
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={checking}
+              className="inline-flex items-center justify-center gap-2.5 rounded-full bg-gradient-to-r from-[#724CFF] to-[#7D4AFF] hover:from-[#805CFF] hover:to-[#8B5CF6] active:scale-[0.97] disabled:opacity-75 px-9 sm:px-11 py-3 text-base sm:text-lg font-semibold text-white shadow-[0_8px_28px_rgba(114,76,255,0.45)] transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A78BFA]"
+            >
+              <RotateCw className={`w-5 h-5 ${checking ? 'animate-spin' : ''}`} strokeWidth={2.4} />
+              <span>{checking ? 'Checking...' : 'Retry'}</span>
+            </button>
+            <div className="h-[1.5px] flex-1 bg-gradient-to-l from-transparent to-[#6E49FF]/75" />
+          </div>
+
+          {retryFeedback && (
+            <p className="mt-3 text-xs sm:text-sm text-rose-300/90 font-medium text-center">
+              Still offline — please check your internet connection.
+            </p>
+          )}
         </div>
       )}
     </div>
